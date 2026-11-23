@@ -878,6 +878,30 @@ function logLine(assessment, { revealPrivate } = {}) {
   return parts.join(" ");
 }
 
+// redactedUnknownSummary — the part of an UNKNOWN reason that is safe to print
+// for a private repo: only text this script composes itself from fixed
+// templates (the check run's status/conclusion, the failed action plus HTTP
+// status, a fixed cause). Anything else — an API error message, a YAML parse
+// error that could quote the config — collapses to "unclassified", so the
+// public log says WHY a private repo is unknown without naming it or
+// echoing its data.
+const SAFE_UNKNOWN_PREFIXES = [
+  "GitHub's config check run could not be found",
+  "no default branch",
+  "the Dependabot config has no updates",
+  "no update job has ever run",
+  "whether Dependabot update jobs are running could not be determined",
+];
+function redactedUnknownSummary(reason) {
+  const text = String(reason);
+  const check = /^the config check run's status\/conclusion could not be classified \(status=[a-z_]+, conclusion=[a-z_]+\)$/.exec(text);
+  if (check) return check[0];
+  const api = /^(reading \.github\/dependabot\.ya?ml|finding the newest commit that touched the config|finding the PR that merged the config commit|looking up the open tracking issue) failed( \(HTTP \d{3}\))?: /.exec(text);
+  if (api) return `${api[1]} failed${api[2] || ""}`;
+  const fixed = SAFE_UNKNOWN_PREFIXES.find((p) => text.startsWith(p));
+  return fixed || "unclassified";
+}
+
 // ── assessRepo ─────────────────────────────────────────────────────────────
 
 function buildCheckEnvelope(run) {
@@ -1290,6 +1314,8 @@ function runSweep({
     // combination must red the sweep just as loudly as a pure unknown.
     if (assessment.unknowns.length && !assessment.private) {
       output(`::error title=Dependabot config health::${assessment.repo}: ${assessment.unknowns.join("; ")}`);
+    } else if (assessment.unknowns.length && !revealPrivate) {
+      output(`::error title=Dependabot config health::a private repo (name withheld): ${assessment.unknowns.map(redactedUnknownSummary).join("; ")}`);
     }
 
     const plan = planIssueAction({
@@ -1431,6 +1457,7 @@ module.exports = {
   ApiError,
   // pure helpers
   ownerTokenEnvName,
+  redactedUnknownSummary,
   parseSchedule,
   silenceThresholdDays,
   candidateShas,

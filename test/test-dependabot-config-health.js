@@ -22,6 +22,7 @@ const {
   ApiError,
   UPDATES_WORKFLOW_PATH,
   ownerTokenEnvName,
+  redactedUnknownSummary,
   parseSchedule,
   silenceThresholdDays,
   candidateShas,
@@ -713,6 +714,40 @@ test("runSweep: output for a fleet with a private finding names neither the repo
   });
   const text = events.join("\n");
   assert.ok(!text.includes("secret"), `leaked: ${text}`);
+});
+
+test("runSweep: a private repo's UNKNOWN reason is logged without its name or data", () => {
+  const events = [];
+  const api = fakeApi({
+    listRepos: (owner) => [{ repo: `${owner}/secret`, private: true, defaultBranch: "main" }],
+    getContent: (o, r, p) => (p === ".github/dependabot.yml" ? yamlContent(WEEKLY_YAML) : (() => { throw new ApiError("Not Found", 404); })()),
+    newestPathCommit: () => ({ sha: "aaa", date: "2020-01-01T00:00:00Z" }),
+    checkRuns: () => ({
+      total_count: 1,
+      check_runs: [{
+        id: 9, app: { slug: "dependabot" }, name: ".github/dependabot.yml", status: "queued", conclusion: null,
+        head_sha: "aaa", output: { title: "top secret detail", summary: "very secret summary text" }, started_at: "2020-01-01T00:05:00Z",
+      }],
+    }),
+    workflowsPage: () => ({ total_count: 0, workflows: [] }),
+  });
+  runSweep({
+    owners: ["Adam-S-Daniel"], api, nowMs: Date.parse("2020-02-01T00:00:00Z"),
+    dryRun: true, revealPrivate: false, requireOwnerTokens: false, env: {},
+    registryFleet: [], onlyRepos: [], out: (l) => events.push(l),
+  });
+  const text = events.join("\n");
+  assert.ok(!text.includes("secret"), `leaked: ${text}`);
+  assert.match(text, /a private repo \(name withheld\): the config check run's status\/conclusion could not be classified \(status=queued, conclusion=none\)/);
+});
+
+test("redactedUnknownSummary: keeps fixed templates, drops anything that could carry repo data", () => {
+  assert.equal(
+    redactedUnknownSummary("reading .github/dependabot.yml failed (HTTP 502): body with secret"),
+    "reading .github/dependabot.yml failed (HTTP 502)",
+  );
+  assert.equal(redactedUnknownSummary("the Dependabot config's schedule could not be parsed as YAML: bad key secret"), "unclassified");
+  assert.equal(redactedUnknownSummary("assessment crashed: secret"), "unclassified");
 });
 
 // ── 11. runSweep end-to-end over the measured 19-repo fleet ────────────────
