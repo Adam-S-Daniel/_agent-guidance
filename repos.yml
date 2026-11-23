@@ -388,6 +388,7 @@ cron_coverage:
     - adamdaniel.ai
     - ai-usage-dashboard
     - claude-memory-map
+    - claude-plan-usage-estimator
     - cms-platform
     - fastmail-actions
     - jodidaniel.com
