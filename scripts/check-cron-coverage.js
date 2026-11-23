@@ -174,13 +174,18 @@ function missingScopes(perms) {
 function resolveGitDir(dir) {
   const marker = path.join(dir, ".git");
   // Open first and decide from the descriptor, never stat-then-read by path:
-  // the entry can change between the two (js/file-system-race). Opening a
-  // directory throws EISDIR on some platforms; that still means a git dir.
+  // the entry can change between the two (js/file-system-race).
+  // O_NONBLOCK keeps a FIFO named `.git` from hanging the open (POSIX only).
   let fd;
   try {
-    fd = fs.openSync(marker, "r");
+    fd = fs.openSync(marker, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
   } catch (e) {
-    return e && e.code === "EISDIR" ? marker : null;
+    // Opening a directory can fail with EISDIR, or EPERM/EACCES on Windows
+    // and on an unreadable directory; ask stat whether it is one (nothing is
+    // read after this check, so it is not a check-then-use).
+    if (!e || !["EISDIR", "EPERM", "EACCES"].includes(e.code)) return null;
+    const st = fs.statSync(marker, { throwIfNoEntry: false });
+    return st && st.isDirectory() ? marker : null;
   }
   let text;
   try {
