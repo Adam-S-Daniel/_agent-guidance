@@ -177,9 +177,24 @@ function resolveGitDir(dir) {
   if (!st) return null;
   if (st.isDirectory()) return marker;
   if (!st.isFile()) return null;
+  // Open once and read through the descriptor, checking it is still a regular
+  // file, rather than reading by path after the stat above: the file can change
+  // between the two (js/file-system-race).
+  let text;
+  try {
+    const fd = fs.openSync(marker, "r");
+    try {
+      if (!fs.fstatSync(fd).isFile()) return null;
+      text = fs.readFileSync(fd, "utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
   // A gitlink: `gitdir: <path>`, resolved against the containing directory
   // because git writes it relative for submodules and absolute for worktrees.
-  const m = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(fs.readFileSync(marker, "utf8"));
+  const m = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(text);
   return m ? path.resolve(dir, m[1]) : null;
 }
 
