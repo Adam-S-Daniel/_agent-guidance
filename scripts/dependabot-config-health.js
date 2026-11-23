@@ -634,6 +634,11 @@ function verdictFor({ config, check, jobs, firstCommitProof, cooldownGaps: gaps,
     } else {
       unknowns.push("GitHub's config check run could not be found on the path commit or its PR merge commit");
     }
+  } else if (check.state === "unknown" && check.stuck && jobs.state === "recent") {
+    // Stuck for good on GitHub's side, but an update job has run since the
+    // config commit, so Dependabot read the config. Any later config commit
+    // gets its own check run and is judged on that.
+    notices.push(`${check.reason}; a successful update job has run since the config commit, so it is not treated as unknown`);
   } else if (check.state === "unknown") {
     unknowns.push(check.reason || "the config check run's status/conclusion could not be classified");
   } else if (check.state === "pending") {
@@ -940,6 +945,7 @@ function buildCheckEnvelope(run, nowMs) {
     outputSummary: (run.output && run.output.summary) || null,
     status: run.status || null,
     conclusion: run.conclusion || null,
+    stuck: stuckReason !== null,
     reason: stuckReason || (state === "unknown"
       ? `the config check run's status/conclusion could not be classified (status=${run.status || "unknown"}, conclusion=${run.conclusion || "none"})`
       : null),

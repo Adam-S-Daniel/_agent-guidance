@@ -729,6 +729,17 @@ test("buildCheckEnvelope: a queued check is pending until stuck for 7 days, then
   assert.equal(redactedUnknownSummary(stuck.reason), stuck.reason);
 });
 
+test("verdictFor: a stuck check is not unknown when an update job ran since the config commit", () => {
+  const stuck = buildCheckEnvelope({ id: 1, status: "queued", conclusion: null, started_at: "2026-11-01T00:00:00Z" }, Date.parse("2026-11-20T00:00:00Z"));
+  const config = { path: ".github/dependabot.yml" };
+  const recent = verdictFor({ config, check: stuck, jobs: { state: "recent" } });
+  assert.equal(recent.verdict, "healthy");
+  assert.equal(recent.unknowns.length, 0);
+  assert.equal(recent.notices.length, 1);
+  const noJobs = verdictFor({ config, check: stuck, jobs: { state: "pending" } });
+  assert.equal(noJobs.verdict, "unknown");
+});
+
 test("runSweep: a private repo's UNKNOWN reason is logged without its name or data", () => {
   const events = [];
   const api = fakeApi({

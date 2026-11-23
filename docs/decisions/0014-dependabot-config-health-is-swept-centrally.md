@@ -229,3 +229,10 @@ GitHub-side stall that no config change of ours caused. A `queued` or
 `unknown` only once it has been unfinished for more than 7 days
 (`STUCK_CHECK_DAYS`), so a run that never finishes still surfaces. Pushing a
 new commit to the config re-runs the check.
+
+Re-running the check did not help: a comment-only commit to the private repo's
+config (2026-11-23) also left its check `queued` while both of its update jobs
+ran and succeeded, so the stall is GitHub's, not the config's. A check stuck
+past 7 days therefore stays `unknown` only when no update job has run since
+the config commit; when one has, Dependabot demonstrably read the config, so it
+is a notice. A later config commit gets its own check run and is judged on that.
