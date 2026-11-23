@@ -173,24 +173,25 @@ function missingScopes(perms) {
 // Pure fs, never a `git` subprocess: the gate must not need git on PATH.
 function resolveGitDir(dir) {
   const marker = path.join(dir, ".git");
-  const st = fs.statSync(marker, { throwIfNoEntry: false });
-  if (!st) return null;
-  if (st.isDirectory()) return marker;
-  if (!st.isFile()) return null;
-  // Open once and read through the descriptor, checking it is still a regular
-  // file, rather than reading by path after the stat above: the file can change
-  // between the two (js/file-system-race).
+  // Open first and decide from the descriptor, never stat-then-read by path:
+  // the entry can change between the two (js/file-system-race). Opening a
+  // directory throws EISDIR on some platforms; that still means a git dir.
+  let fd;
+  try {
+    fd = fs.openSync(marker, "r");
+  } catch (e) {
+    return e && e.code === "EISDIR" ? marker : null;
+  }
   let text;
   try {
-    const fd = fs.openSync(marker, "r");
-    try {
-      if (!fs.fstatSync(fd).isFile()) return null;
-      text = fs.readFileSync(fd, "utf8");
-    } finally {
-      fs.closeSync(fd);
-    }
+    const st = fs.fstatSync(fd);
+    if (st.isDirectory()) return marker;
+    if (!st.isFile()) return null;
+    text = fs.readFileSync(fd, "utf8");
   } catch {
     return null;
+  } finally {
+    fs.closeSync(fd);
   }
   // A gitlink: `gitdir: <path>`, resolved against the containing directory
   // because git writes it relative for submodules and absolute for worktrees.
