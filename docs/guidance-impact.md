@@ -50,6 +50,12 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-11-19 — dependency-updates — edit
+- Motivation: Adam's policy (2026-11-19): third-party action bumps auto-merge after the Dependabot cooldown, a bump that resolves a security alert merges at once, and the owner's own actions (`Adam-S-Daniel/*`, `jodidaniel/*`) skip the cooldown; the section still said only cms-platform is `exclude`d, which contradicted the github-actions configs merged fleet-wide on 2026-11-18
+- Change: the cms-platform note became "advisories and own actions (`exclude` `Adam-S-Daniel/*`, `jodidaniel/*`) skip it" and "Action bumps auto-merge once it passes" was added; the advisories, 3-day, minor/patch and harness-CLI notes are kept, with words trimmed (534 to 526 bytes) to hold base.md under its 26,624-byte cap
+- Eval: not re-run (no eval harness in the authoring session); `node test/test-dependabot-config-health.js` and `node scripts/check-guidance-coverage.js` exit 0; fixture evals/guidance/dependency-updates/ re-runs on the new text
+- Outcome: pending
+
 ## 2026-11-13 — pinning-github-actions — edit
 - Motivation: issue 540: gh-actions-lock v0.4.1 no longer rewrites `./` to `$/` by default (a plain run fails) and the shared check no longer fails on every finding, so two sentences were wrong (evidence docs/evidence/2026-11-13-gh-actions-lock-v0.4.1.md)
 - Change: local actions read `$/<path>`, not `./`; verify-actions-lock "fails on a pin error"; "40-character" shortened to "40-hex" to hold the section at its size (0 bytes net)
