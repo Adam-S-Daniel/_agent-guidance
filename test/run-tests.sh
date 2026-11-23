@@ -3618,6 +3618,19 @@ test_build_script() {
     echo "$output" > "$TEST_DIR/build-unknown.md"
     assert_contains "$TEST_DIR/build-unknown.md" "WARNING: unknown section 'bogus'" "warns on unknown section"
     assert_contains "$TEST_DIR/build-unknown.md" "## Python" "still includes valid section"
+
+    # Section names come from a consumer repo's .agents-sync.yml, so they are
+    # untrusted: a path must not reach outside agents-md/sections/ (`../base`
+    # would inline the owner-only base.md, ADR 0043), and a name must not
+    # close the HTML comment it is echoed into and inject Markdown.
+    output=$("$REPO_ROOT/scripts/build-agents-md.sh" python ../base 'x --> # Injected' 2>/dev/null)
+    echo "$output" > "$TEST_DIR/build-hostile.md"
+    local base_h
+    base_h=$(grep -m1 '^## ' "$REPO_ROOT/agents-md/base.md")
+    assert_not_contains "$TEST_DIR/build-hostile.md" "$base_h" "a ../ section name does not inline base.md"
+    assert_not_contains "$TEST_DIR/build-hostile.md" "# Injected" "a section name cannot inject Markdown"
+    assert_contains "$TEST_DIR/build-hostile.md" "WARNING: 2 invalid section name(s) ignored" "warns on invalid section names"
+    assert_contains "$TEST_DIR/build-hostile.md" "## Python" "still includes valid section beside invalid names"
 }
 
 # ── Test 1a: bridge-status.sh ─────────────────────────────────────────────
