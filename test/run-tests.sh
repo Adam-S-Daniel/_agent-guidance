@@ -7909,6 +7909,30 @@ test_sync_bootstrap() {
     else
         pass "repo-unparseable: hook withheld too (a hook nothing runs is silently dead)"
     fi
+
+    # ── A build that fails for ONE repo must count that repo as failed and
+    #    let the run go on, never abort the fleet under set -e. A copied tree
+    #    whose build script fails only inside repo-ignored's clone (third of
+    #    six); --dry-run keeps the leg from writing to the fleet.
+    local btree="$TEST_DIR/build-fail-tree" bout="$TEST_DIR/sync-build-fail.txt" brc=0
+    rm -rf "$btree"; mkdir -p "$btree/.github"
+    cp -r "$REPO_ROOT/scripts" "$REPO_ROOT/agents-md" "$REPO_ROOT/templates" "$btree/"
+    cp "$REPO_ROOT/.github/fleet-contributor-rules.md" "$btree/.github/"
+    mv "$btree/scripts/build-agents-md.sh" "$btree/scripts/build-agents-md.real.sh"
+    printf '#!/usr/bin/env bash\ncase "$PWD" in *_repo-ignored) echo "stub build failure" >&2; exit 3 ;; esac\nexec %q "$@"\n' \
+        "$btree/scripts/build-agents-md.real.sh" > "$btree/scripts/build-agents-md.sh"
+    chmod +x "$btree/scripts/build-agents-md.sh"
+    GITHUB_REPOSITORY_OWNER=bootorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$btree/scripts/sync.sh" --dry-run > "$bout" 2>&1 || brc=$?
+    assert_contains "$bout" "stub build failure" "build failure: the stub build ran and failed"
+    assert_contains "$bout" "bootorg/repo-ignored: could not build AGENTS.md" "build failure: the failing repo is named"
+    assert_contains "$bout" "=== bootorg/repo-unparseable ===" "build failure: the run reaches the last repo"
+    assert_contains "$bout" "1 failed ===" "build failure: counted as one failed repo"
+    [[ "$brc" -ne 0 ]] && pass "build failure: the run exits nonzero (rc=$brc)" \
+        || fail "build failure: the run exits nonzero"
 }
 
 # ── Test 5c: a second sync run is a no-op (no duplicate registration) ─────

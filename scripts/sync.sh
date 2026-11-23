@@ -1151,7 +1151,13 @@ for repo_name in "${REPOS[@]}"; do
 
     # ── Build managed content ──────────────────────────────────────────
 
-    managed_content=$(AGENTS_MD_MODE="$FLEET_MODE" "$BUILD_SCRIPT" "${sections[@]}")
+    # Checked, not bare: under set -e a failed build in a plain assignment
+    # aborted the whole fleet run at this repo, leaving every later one unsynced.
+    if ! managed_content=$(AGENTS_MD_MODE="$FLEET_MODE" "$BUILD_SCRIPT" "${sections[@]}"); then
+        fail "$repo_name: could not build AGENTS.md (mode $FLEET_MODE, sections: ${sections[*]:-none})"
+        ((FAIL_COUNT++)) || true
+        cd "$REPO_ROOT"; continue
+    fi
 
     # ── Preserve repo-specific content ─────────────────────────────────
 
