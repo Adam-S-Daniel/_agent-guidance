@@ -23,6 +23,7 @@ const {
   UPDATES_WORKFLOW_PATH,
   ownerTokenEnvName,
   redactedUnknownSummary,
+  buildCheckEnvelope,
   parseSchedule,
   silenceThresholdDays,
   candidateShas,
@@ -187,8 +188,9 @@ test("checkState: completed + failure -> failure", () => {
   assert.equal(checkState({ status: "completed", conclusion: "failure" }), "failure");
 });
 
-test("checkState: in_progress -> unknown", () => {
-  assert.equal(checkState({ status: "in_progress", conclusion: null }), "unknown");
+test("checkState: in_progress and queued -> pending", () => {
+  assert.equal(checkState({ status: "in_progress", conclusion: null }), "pending");
+  assert.equal(checkState({ status: "queued", conclusion: null }), "pending");
 });
 
 test("checkState: completed + neutral -> unknown", () => {
@@ -716,6 +718,28 @@ test("runSweep: output for a fleet with a private finding names neither the repo
   assert.ok(!text.includes("secret"), `leaked: ${text}`);
 });
 
+test("buildCheckEnvelope: a queued check is pending until stuck for 7 days, then unknown", () => {
+  const run = { id: 1, status: "queued", conclusion: null, started_at: "2026-11-01T00:00:00Z" };
+  const fresh = buildCheckEnvelope(run, Date.parse("2026-11-07T23:00:00Z"));
+  assert.equal(fresh.state, "pending");
+  assert.equal(fresh.reason, null);
+  const stuck = buildCheckEnvelope(run, Date.parse("2026-11-09T00:00:00Z"));
+  assert.equal(stuck.state, "unknown");
+  assert.match(stuck.reason, /stuck queued for more than 7 days/);
+  assert.equal(redactedUnknownSummary(stuck.reason), stuck.reason);
+});
+
+test("verdictFor: a stuck check is not unknown when an update job ran since the config commit", () => {
+  const stuck = buildCheckEnvelope({ id: 1, status: "queued", conclusion: null, started_at: "2026-11-01T00:00:00Z" }, Date.parse("2026-11-20T00:00:00Z"));
+  const config = { path: ".github/dependabot.yml" };
+  const recent = verdictFor({ config, check: stuck, jobs: { state: "recent" } });
+  assert.equal(recent.verdict, "healthy");
+  assert.equal(recent.unknowns.length, 0);
+  assert.equal(recent.notices.length, 1);
+  const noJobs = verdictFor({ config, check: stuck, jobs: { state: "pending" } });
+  assert.equal(noJobs.verdict, "unknown");
+});
+
 test("runSweep: a private repo's UNKNOWN reason is logged without its name or data", () => {
   const events = [];
   const api = fakeApi({
@@ -738,7 +762,7 @@ test("runSweep: a private repo's UNKNOWN reason is logged without its name or da
   });
   const text = events.join("\n");
   assert.ok(!text.includes("secret"), `leaked: ${text}`);
-  assert.match(text, /a private repo \(name withheld\): the config check run's status\/conclusion could not be classified \(status=queued, conclusion=none\)/);
+  assert.match(text, /a private repo \(name withheld\): the config check run has been stuck queued for more than 7 days/);
 });
 
 test("redactedUnknownSummary: keeps fixed templates, drops anything that could carry repo data", () => {

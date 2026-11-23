@@ -217,3 +217,22 @@ only have parsed THAT commit's content. The multiple-commits case is exactly
 #429's shape and is unchanged: `onlyCommit` is false, the narrow lookup is
 never even attempted (proven in `k4` by making it throw if called), and a
 missing check stays `unknown`.
+
+## Addendum (2026-11-23): a check run stuck `queued` is pending, then unknown
+
+GitHub left the `dependabot` check run `queued` and never completed it on
+`cms-platform` (commit `a4776de`, 2026-11-23) and on one private repo (since
+2026-11-21), while every other repo's run finished within seconds. The script
+read any non-completed run as `unknown`, so the daily sweep went red on a
+GitHub-side stall that no config change of ours caused. A `queued` or
+`in_progress` run now reads as `pending` (no result yet, not red) and becomes
+`unknown` only once it has been unfinished for more than 7 days
+(`STUCK_CHECK_DAYS`), so a run that never finishes still surfaces. Pushing a
+new commit to the config re-runs the check.
+
+Re-running the check did not help: a comment-only commit to the private repo's
+config (2026-11-23) also left its check `queued` while both of its update jobs
+ran and succeeded, so the stall is GitHub's, not the config's. A check stuck
+past 7 days therefore stays `unknown` only when no update job has run since
+the config commit; when one has, Dependabot demonstrably read the config, so it
+is a notice. A later config commit gets its own check run and is judged on that.
