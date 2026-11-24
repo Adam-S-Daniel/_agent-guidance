@@ -114,6 +114,23 @@ jobs:
             printf '\n## Repo-specific guidance overlap (warn-only)\n\nNot computed tonight: the overlap step failed. See the workflow run log.\n' >> drift-report.md
           fi
 
+      # Warn-only like the overlap step. It reads the same directory (now
+      # holding every repo's tree, languages, dependabot.yml and .gitattributes)
+      # and writes the findings file the nudge step below turns into an issue.
+      # No findings file when it fails: ABSENT concludes nothing.
+      - name: Add the language fit section
+        env:
+          DRIFT_GUIDANCE_DIR: ${{ runner.temp }}/guidance
+        run: |
+          rm -f "$RUNNER_TEMP/language-fit-findings.txt"
+          if node scripts/language-fit.js "$DRIFT_GUIDANCE_DIR" --findings "$RUNNER_TEMP/language-fit-findings.txt" > "$RUNNER_TEMP/language-fit.md"; then
+            { echo; cat "$RUNNER_TEMP/language-fit.md"; } >> drift-report.md
+          else
+            rm -f "$RUNNER_TEMP/language-fit-findings.txt"
+            echo "::warning::language-fit.js did not run; the report has no language fit section tonight"
+            printf '\n## Language fit (warn-only)\n\nNot computed tonight: the language fit step failed. See the workflow run log.\n' >> drift-report.md
+          fi
+
       # Under the branch ruleset that requires a PR before merging, a plain
       # "git push to main" as github-actions[bot] is rejected, so this can't
       # land on main directly. An earlier version of this job opened a
@@ -284,6 +301,61 @@ jobs:
             echo "updated #$existing"
           else
             gh issue create --title "$ISSUE_TITLE" --label ci --body-file /tmp/cron-nudge-body.md
+          fi
+
+      # Language fit findings, its own issue like the two above. The findings
+      # file is public text: language-fit.js already reduced private repos to a
+      # category and a count. ABSENT concludes nothing (the step above removes
+      # it when language-fit.js fails); an EMPTY file closes the issue.
+      - name: Nudge on language fit findings
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIDECAR: ${{ runner.temp }}/language-fit-findings.txt
+          ISSUE_TITLE: "Language fit findings"
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f "$SIDECAR" ]]; then
+            echo "::warning::$SIDECAR was not written — language-fit.js did not run, so nothing is concluded here"
+            exit 0
+          fi
+
+          existing=$(gh issue list --state open --label ci \
+            --search "$ISSUE_TITLE in:title" --json number,title \
+            --jq "[.[] | select(.title == env.ISSUE_TITLE)] | .[0].number // empty")
+
+          if [[ ! -s "$SIDECAR" ]]; then
+            if [[ -n "$existing" ]]; then
+              gh issue close "$existing" --comment \
+                "The nightly language fit check has no findings. Closed by the nightly drift report."
+              echo "closed #$existing — no language fit findings"
+            else
+              echo "no language fit findings, and no open nudge to close"
+            fi
+            exit 0
+          fi
+
+          # Body from a FILE, never an argument: repo names and paths in the
+          # findings are untrusted input as far as this script is concerned.
+          {
+            echo "The nightly language fit check found repos whose language-dependent configuration does not fit what they contain. Findings (private repos show a category and a count only; open the repo for the detail):"
+            echo
+            sed 's/^/- /' "$SIDECAR"
+            echo
+            echo "For the fixer: one PR per repo. In each repo:"
+            echo
+            echo "- add or edit \`.agents-sync.yml\` \`sections:\` to the list the finding gives (copy the comment header from \`.agents-sync.example.yml\` in this repo);"
+            echo "- add the suggested \`.gitattributes\` linguist lines, after judging whether each path is vendored, generated or documentation;"
+            echo "- add or fix the \`.github/dependabot.yml\` entries (and the missing lockfile or workflow entry)."
+            echo
+            echo "Follow the fleet merge rules (merge commit, PR description opens with a TLDR, agent marker). Read the full nightly report in the drift report's \"Language fit\" section on the \`persistent/drift-report\` branch. This issue closes itself on the next nightly run once there are no findings."
+          } > /tmp/language-fit-nudge-body.md
+
+          if [[ -n "$existing" ]]; then
+            gh issue edit "$existing" --body-file /tmp/language-fit-nudge-body.md
+            echo "updated #$existing"
+          else
+            gh issue create --title "$ISSUE_TITLE" --label ci --label agent-ready --body-file /tmp/language-fit-nudge-body.md
           fi
 
       # THE OTHER DIRECTION, and its own issue rather than a second section of

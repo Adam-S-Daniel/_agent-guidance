@@ -97,8 +97,8 @@ blocked comments. The on-hold stop overrides step 7 below.
    cause, and say in the PR which items it fixes. A failure that is not the
    repo's to fix (an outage, a revoked secret, a setting only the owner can
    change) is a stop under step 7, with the evidence. If a
-   merged `Refs` PR already fixed some findings (the fleet worker comments
-   which), do only the findings no merged PR fixed; when none are left,
+   merged `Refs` PR already fixed some findings (the fleet worker's merge or
+   `scripts/stale-claims.js` comments which PRs), do only the findings no merged PR fixed; when none are left,
    close the issue as completed with a comment naming the merged PRs. In
    `adam-agentskills`, an edit to a `SKILL.md` also raises the bundle's
    `version` in both `plugin.json` files (only that value changes), adds a
@@ -269,10 +269,24 @@ other issue, with three differences:
 
 ## Stale claims
 
-An issue labeled `agent-working` with no linked open PR for more than 24
-hours is reported in the run's summary, never silently re-taken: a worker
-that died mid-issue may have left a branch or a half-written comment, and a
-person decides whether to reset the labels.
+Before listing candidates, the fleet worker runs
+`node scripts/stale-claims.js --apply` (in `_agent-guidance`, with
+`SYNC_OWNERS` set to the fleet's owners). For each open `agent-working` issue
+in a fleet repo with no linked open PR, it hands back the ones a merged
+`Refs` PR left half done: when a PR that says `Refs` for the issue merged
+after the issue's latest claim, it swaps `agent-working` for `agent-ready`
+and comments the merged PRs, so this run's step 3 does only the findings no
+merged PR fixed. That swap no longer depends on the fleet worker being the
+one that merged: a `Refs` PR merged by the owner or a project thread used to
+strand its issue for good (wsl-automation#120, 2026-11-18). Fixture-request
+issues (`needs-fixtures`, `needs-harder-fixtures`) are skipped: skills-evals'
+sweep closes them.
+
+Any other issue labeled `agent-working` with no linked open PR for more than
+24 hours (the script's `stale` and `closes-open` rows) is reported in the
+run's summary, never silently re-taken: a worker that died mid-issue may
+have left a branch or a half-written comment, and a person decides whether
+to reset the labels.
 
 Held issues and issues with held linked PRs stay on hold, even when a claim
 is stale. Report them read-only; never suggest resetting their labels.

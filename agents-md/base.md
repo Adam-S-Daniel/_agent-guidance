@@ -38,6 +38,10 @@ incident behind each rule: `docs/evidence/base-md-incidents.md`.
   `adam-writing-style` skill.
 - Text to paste: give all of it, never edits.
 
+## Pasted config is a stub
+
+A pasted routine prompt or setup script only runs or reads a repo file.
+
 ## Anything you name gets its link
 
 Any noun the reader might open gets its URL in the same sentence:
@@ -214,9 +218,8 @@ Explain a merge, close or label change in a marked comment.
 ## PR descriptions open with a TLDR
 
 Start every PR description with a `## TLDR` heading and one to three
-plain-English sentences on what changes and why. Only an attribution block
-(HTML comments, a `_Requested by …_` line) may precede it. `agent-checks`
-fails a PR without it; editing the description re-runs the check.
+plain-English sentences on what changes and why; only an attribution block
+may precede it (`agent-checks` enforces it).
 
 ## A GitHub 404 means "not authorized", not "not there"
 
@@ -305,14 +308,14 @@ CLOSED without `gitleaks` on `PATH`, which a fresh container lacks.
 
 ## Dependency updates
 
-Dependabot `cooldown`: `default-days: 7` (cms-platform `exclude`d);
-`semver-major-days: 30` where supported (not `github-actions`). Version
-updates only (advisories bypass it); unset still waits 3 days; leave
-`semver-minor-days` / `-patch-days` undefined.
-**By hand**, nothing watches: take the newest release past 7 days
+Dependabot `cooldown`: `default-days: 7`, `semver-major-days: 30` (not
+`github-actions`); advisories and own actions (`exclude` `Adam-S-Daniel/*`,
+`jodidaniel/*`) skip it; unset waits 3 days; leave
+`semver-minor-days`/`-patch-days` undefined. Action bumps auto-merge once it
+passes. **By hand**: newest release past 7 days
 (`npm view <pkg> time --json`), pinned exact. **Harness CLIs are unpinned**
 (Claude Code, Codex; not `uses:` or SDKs): a run installs npm `latest`;
-record its version and the models used.
+record the version and models.
 
 ## A name you choose becomes data a scanner reads
 

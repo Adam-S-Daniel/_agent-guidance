@@ -80,8 +80,13 @@ while IFS= read -r f; do
     [[ "$f" == docs/reference/adopt-the-whole-system/* ]] && emit full
     name="${f##*/}"
     # Tracked files at the head commit, outside docs/, that name this file.
-    readers=$(git -C "$repo" grep -lF -e "$name" "$head" -- . ':(exclude)docs/' 2>/dev/null \
-        | sed "s|^$head:||") || readers=""
+    # Exit 1 is "no file names it"; anything higher is an error (a missing
+    # object in a partial checkout), which must widen the scope, not skip.
+    grep_rc=0
+    readers=$(git -C "$repo" grep -lF -e "$name" "$head" -- . ':(exclude)docs/' 2>/dev/null) \
+        || grep_rc=$?
+    (( grep_rc <= 1 )) || emit full
+    readers=$(sed "s|^$head:||" <<<"$readers")
     [[ -z "$readers" ]] && continue
     match=""
     for entry in "${DATA_FILES[@]}"; do

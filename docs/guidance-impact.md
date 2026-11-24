@@ -50,6 +50,24 @@ Rules:
 Entries before 2026-09-04 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
 
+## 2026-11-19 — dependency-updates — edit
+- Motivation: Adam's policy (2026-11-19): third-party action bumps auto-merge after the Dependabot cooldown, a bump that resolves a security alert merges at once, and the owner's own actions (`Adam-S-Daniel/*`, `jodidaniel/*`) skip the cooldown; the section still said only cms-platform is `exclude`d, which contradicted the github-actions configs merged fleet-wide on 2026-11-18
+- Change: the cms-platform note became "advisories and own actions (`exclude` `Adam-S-Daniel/*`, `jodidaniel/*`) skip it" and "Action bumps auto-merge once it passes" was added; the advisories, 3-day, minor/patch and harness-CLI notes are kept, with words trimmed (534 to 526 bytes) to hold base.md under its 26,624-byte cap
+- Eval: not re-run (no eval harness in the authoring session); `node test/test-dependabot-config-health.js` and `node scripts/check-guidance-coverage.js` exit 0; fixture evals/guidance/dependency-updates/ re-runs on the new text
+- Outcome: pending
+
+## 2026-11-14 — pasted-config-is-a-stub — create
+- Motivation: Adam's 2026-11-13 rule (routine prompts point at repo files so the task rarely needs edits) lived only in one project's memory; on 2026-11-14 an agent handed him a ~180-line environment setup script to paste, and he had to ask whether it maximized what a versioned file could hold
+- Change: new one-line owner section: a pasted routine prompt or setup script only runs or reads a repo file
+- Eval: exempt (skipped row)
+- Outcome: pending — opened 2026-11-14
+
+## 2026-11-14 — pr-tldr — edit
+- Motivation: base.md sat 5 bytes under its 26 KiB budget (test/test-on-hold-label.js), so the new pasted-config section needed room, and pr-tldr is one of the few sections with no eval evidence to reset (scripts/eval-protected.js)
+- Change: dropped the attribution-block examples and "editing the description re-runs the check"; `agent-checks` enforces the rule and its failure message names the fix
+- Eval: exempt (skipped row)
+- Outcome: pending — opened 2026-11-14
+
 ## 2026-11-13 — pinning-github-actions — edit
 - Motivation: issue 540: gh-actions-lock v0.4.1 no longer rewrites `./` to `$/` by default (a plain run fails) and the shared check no longer fails on every finding, so two sentences were wrong (evidence docs/evidence/2026-11-13-gh-actions-lock-v0.4.1.md)
 - Change: local actions read `$/<path>`, not `./`; verify-actions-lock "fails on a pin error"; "40-character" shortened to "40-hex" to hold the section at its size (0 bytes net)

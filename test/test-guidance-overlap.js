@@ -128,29 +128,6 @@ test('repo text is never quoted in the output', () => {
   assert.doesNotMatch(out, /restic|vault|ninety/);
 });
 
-test('a section requested for a language the repo has none of is reported', () => {
-  const { out } = run(fixture({
-    'own__one.agents.md': agents(PRIVATE_RULE),
-    'own__one.sections': 'python\n',
-    'own__one.languages.json': JSON.stringify({ JavaScript: 1000 }),
-    'own__two.agents.md': agents(PIN_RULE),
-    'own__two.sections': 'python\n',
-    'own__two.languages.json': JSON.stringify({ Python: 10 }),
-  }));
-  const s = sectionOf(out, 'Sections requested for a language the repo does not use');
-  assert.match(s, /\(1\)/);
-  assert.match(s, /own\/one` requests `python`/);
-  assert.doesNotMatch(s, /own\/two/);
-});
-
-test('a repo with sections whose languages were not read is named', () => {
-  const { out } = run(fixture({
-    'own__one.agents.md': agents(PRIVATE_RULE),
-    'own__one.sections': 'python\n',
-  }));
-  assert.match(out, /Languages not read for: `own\/one`/);
-});
-
 test('an unreadable base.md is said, not silently skipped', () => {
   const f = fixture({ 'own__one.agents.md': agents(PRIVATE_RULE) });
   fs.unlinkSync(f.basePath);

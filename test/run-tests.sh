@@ -65,6 +65,11 @@ export FLEET_GIT_HOOKS=off
 # copy CI's `npm ci` puts in this repo's node_modules themselves.
 export AGENT_CHECKS_DATED_PHRASING_MODULES="$TEST_DIR/no-markdown-it"
 
+# Nor may its lint pass run a linter the suite's machine happens to have, or
+# download one: it is off here, and test_agent_checks_lint turns it on with stub
+# tools on an isolated PATH.
+export AGENT_CHECKS_LINT=off
+
 # Nor may it install zizmor from PyPI for gha-template-injection: point it at
 # a path with no zizmor, so a run over a workflow file warns (or, under
 # GITHUB_ACTIONS, refuses) without the network. test_agent_checks_gha_injection
@@ -1150,6 +1155,9 @@ PY
                     ;;
             esac
             "$REPO_ROOT/scripts/hook-eol-gitattributes.sh" ensure .gitattributes >/dev/null
+            for l in ".githooks/** linguist-vendored" ".claude/hooks/** linguist-vendored"; do
+                HOOK_EOL_LINE="$l" "$REPO_ROOT/scripts/hook-eol-gitattributes.sh" ensure .gitattributes >/dev/null
+            done
             git add -A
             git commit -m init >/dev/null 2>&1
             git push origin HEAD:main >/dev/null 2>&1
@@ -2621,6 +2629,16 @@ case "$1" in
                         done
                         json="[$rows]"
                         ;;
+                    dcorg)
+                        # The Dependabot config lane's fixtures, off disk too.
+                        rows=""
+                        for bare_dir in "${MOCK_BARE_DIR}"/dcorg_*; do
+                            [[ -d "$bare_dir" ]] || continue
+                            name=$(basename "$bare_dir")
+                            rows="${rows}${rows:+,}{\"nameWithOwner\":\"dcorg/${name#dcorg_}\"}"
+                        done
+                        json="[$rows]"
+                        ;;
                     acorg)
                         # The agent-checks lane's fixtures, enumerated off
                         # disk like gattrorg's.
@@ -2746,6 +2764,20 @@ case "$1" in
             lang_file="${MOCK_BARE_DIR}/${BASH_REMATCH[1]}_${BASH_REMATCH[2]}.languages.json"
             if [[ -f "$lang_file" ]]; then
                 cat "$lang_file"
+                exit 0
+            fi
+            echo "gh: Not Found (HTTP 404)" >&2
+            exit 1
+        fi
+
+        # GET repos/{owner}/{repo}/git/trees/HEAD?recursive=1 — the language-fit
+        # inputs, asked only when DRIFT_GUIDANCE_DIR is set. A fixture opts in
+        # with <bare>/<owner>_<repo>.tree.json holding the raw API shape; the
+        # caller's --jq is applied as real gh does. Without one: a 404.
+        if [[ "$api_path" =~ ^repos/([^/]+)/([^/]+)/git/trees/HEAD ]]; then
+            tree_file="${MOCK_BARE_DIR}/${BASH_REMATCH[1]}_${BASH_REMATCH[2]}.tree.json"
+            if [[ -f "$tree_file" ]]; then
+                if [[ -n "$jq_filter" ]]; then jq -c "$jq_filter" "$tree_file"; else cat "$tree_file"; fi
                 exit 0
             fi
             echo "gh: Not Found (HTTP 404)" >&2
@@ -2922,7 +2954,9 @@ case "$1" in
                 echo '{"message":"Not Found","status":"404"}'
                 exit 1
             fi
-            json='{"default_branch": "main"}'
+            json='{"default_branch": "main", "private": false}'
+            # <bare>/<owner>_<repo>.private makes the repo private (language-fit).
+            [[ -f "${MOCK_BARE_DIR}/${repo_slug}.private" ]] && json='{"default_branch": "main", "private": true}'
             if [[ -n "$jq_filter" ]]; then echo "$json" | jq -r "$jq_filter"; else echo "$json"; fi
             exit 0
         fi
@@ -3584,6 +3618,19 @@ test_build_script() {
     echo "$output" > "$TEST_DIR/build-unknown.md"
     assert_contains "$TEST_DIR/build-unknown.md" "WARNING: unknown section 'bogus'" "warns on unknown section"
     assert_contains "$TEST_DIR/build-unknown.md" "## Python" "still includes valid section"
+
+    # Section names come from a consumer repo's .agents-sync.yml, so they are
+    # untrusted: a path must not reach outside agents-md/sections/ (`../base`
+    # would inline the owner-only base.md, ADR 0043), and a name must not
+    # close the HTML comment it is echoed into and inject Markdown.
+    output=$("$REPO_ROOT/scripts/build-agents-md.sh" python ../base 'x --> # Injected' 2>/dev/null)
+    echo "$output" > "$TEST_DIR/build-hostile.md"
+    local base_h
+    base_h=$(grep -m1 '^## ' "$REPO_ROOT/agents-md/base.md")
+    assert_not_contains "$TEST_DIR/build-hostile.md" "$base_h" "a ../ section name does not inline base.md"
+    assert_not_contains "$TEST_DIR/build-hostile.md" "# Injected" "a section name cannot inject Markdown"
+    assert_contains "$TEST_DIR/build-hostile.md" "WARNING: 2 invalid section name(s) ignored" "warns on invalid section names"
+    assert_contains "$TEST_DIR/build-hostile.md" "## Python" "still includes valid section beside invalid names"
 }
 
 # ── Test 1a: bridge-status.sh ─────────────────────────────────────────────
@@ -7862,6 +7909,30 @@ test_sync_bootstrap() {
     else
         pass "repo-unparseable: hook withheld too (a hook nothing runs is silently dead)"
     fi
+
+    # ── A build that fails for ONE repo must count that repo as failed and
+    #    let the run go on, never abort the fleet under set -e. A copied tree
+    #    whose build script fails only inside repo-ignored's clone (third of
+    #    six); --dry-run keeps the leg from writing to the fleet.
+    local btree="$TEST_DIR/build-fail-tree" bout="$TEST_DIR/sync-build-fail.txt" brc=0
+    rm -rf "$btree"; mkdir -p "$btree/.github"
+    cp -r "$REPO_ROOT/scripts" "$REPO_ROOT/agents-md" "$REPO_ROOT/templates" "$btree/"
+    cp "$REPO_ROOT/.github/fleet-contributor-rules.md" "$btree/.github/"
+    mv "$btree/scripts/build-agents-md.sh" "$btree/scripts/build-agents-md.real.sh"
+    printf '#!/usr/bin/env bash\ncase "$PWD" in *_repo-ignored) echo "stub build failure" >&2; exit 3 ;; esac\nexec %q "$@"\n' \
+        "$btree/scripts/build-agents-md.real.sh" > "$btree/scripts/build-agents-md.sh"
+    chmod +x "$btree/scripts/build-agents-md.sh"
+    GITHUB_REPOSITORY_OWNER=bootorg \
+    MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$btree/scripts/sync.sh" --dry-run > "$bout" 2>&1 || brc=$?
+    assert_contains "$bout" "stub build failure" "build failure: the stub build ran and failed"
+    assert_contains "$bout" "bootorg/repo-ignored: could not build AGENTS.md" "build failure: the failing repo is named"
+    assert_contains "$bout" "=== bootorg/repo-unparseable ===" "build failure: the run reaches the last repo"
+    assert_contains "$bout" "1 failed ===" "build failure: counted as one failed repo"
+    [[ "$brc" -ne 0 ]] && pass "build failure: the run exits nonzero (rc=$brc)" \
+        || fail "build failure: the run exits nonzero"
 }
 
 # ── Test 5c: a second sync run is a no-op (no duplicate registration) ─────
@@ -14435,16 +14506,17 @@ test_prompt_audit_sweep() {
     local pass_n fail_n
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
-    if [[ "$rc" -eq 0 && "$pass_n" == "22" && "$fail_n" == "0" ]]; then
-        pass "prompt-audit sweep policy: 22 passed"
+    if [[ "$rc" -eq 0 && "$pass_n" == "23" && "$fail_n" == "0" ]]; then
+        pass "prompt-audit sweep policy: 23 passed"
     else
-        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=22, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=23, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
 # The fleet worker fire workflow (fleet-worker-fire.yml): a matrix of the fleet and loop workers, each (or
 # thinned by FLEET_WORKER_EVERY_HOURS), the bearer on stdin only, an
-# unconfigured URL or bearer fails. Never piped.
+# unconfigured URL or bearer fails, and a scheduled loop fire waits on the
+# skills-evals pace hold. Never piped.
 test_fleet_worker_fire() {
     echo ""
     echo "=== Test: fleet worker fire workflow ==="
@@ -14453,10 +14525,10 @@ test_fleet_worker_fire() {
     local pass_n fail_n
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
-    if [[ "$rc" -eq 0 && "$pass_n" == "14" && "$fail_n" == "0" ]]; then
-        pass "fleet worker fire workflow: 14 passed"
+    if [[ "$rc" -eq 0 && "$pass_n" == "18" && "$fail_n" == "0" ]]; then
+        pass "fleet worker fire workflow: 18 passed"
     else
-        fail "fleet worker fire workflow: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=14, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "fleet worker fire workflow: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=18, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
@@ -20160,7 +20232,7 @@ case "${1:-}" in
                     src="$FIXTURES/commits-${num}.json"
                 else
                     src="$FIXTURES/commits-default.json"
-                    echo '[{"sha":"1111111111111111111111111111111111111111","author":{"login":"dependabot[bot]"},"commit":{"verification":{"verified":true}},"parents":[{}]}]' > "$src"
+                    echo '[{"sha":"1111111111111111111111111111111111111111","author":{"login":"dependabot[bot]","id":49699333},"committer":{"login":"web-flow","id":19864447},"commit":{"committer":{"email":"noreply@github.com"},"verification":{"verified":true,"reason":"valid"}},"parents":[{}]}]' > "$src"
                 fi
                 jq -r "$jqf" "$src"
                 exit 0
@@ -20580,8 +20652,8 @@ GHSTUB
     # ── Security-review findings: provenance, workflow content, behind, floor ──
     local cs_two='[{"workflowName":"CI","name":"test","conclusion":"SUCCESS"}]'
     local PATCH_OK='@@ -1 +1 @@\n-      - uses: a/b@v1\n+      - uses: a/b@v2 # v2'
-    local C_BOT='{"sha":"1111111111111111111111111111111111111111","author":{"login":"dependabot[bot]"},"commit":{"verification":{"verified":true}},"parents":[{}]}'
-    local C_MERGE='{"sha":"2222222222222222222222222222222222222222","author":{"login":"github-actions[bot]"},"commit":{"verification":{"verified":true}},"parents":[{},{}]}'
+    local C_BOT='{"sha":"1111111111111111111111111111111111111111","author":{"login":"dependabot[bot]","id":49699333},"committer":{"login":"web-flow","id":19864447},"commit":{"committer":{"email":"noreply@github.com"},"verification":{"verified":true,"reason":"valid"}},"parents":[{}]}'
+    local C_MERGE='{"sha":"2222222222222222222222222222222222222222","author":{"login":"github-actions[bot]","id":41898282},"committer":{"login":"web-flow","id":19864447},"commit":{"committer":{"email":"noreply@github.com"},"verification":{"verified":true,"reason":"valid"}},"parents":[{},{}]}'
     # one_case <name> <files-json|""> <commits-json|""> [behind-by] [rollup]:
     # one PR, run once; output in $oc_out, fixtures in $oc_fx.
     local oc_out oc_fx oc_rc
@@ -20608,7 +20680,7 @@ GHSTUB
             pass "sweep gating $1: no pr merge call"
         fi
     }
-    local login_commit='{"sha":"deadbeefcafe0000000000000000000000000000","author":{"login":"mal$lory[x]"},"commit":{"verification":{"verified":true}},"parents":[{}]}'
+    local login_commit='{"sha":"deadbeefcafe0000000000000000000000000000","author":{"login":"mal$lory[x]","id":1},"committer":{"login":"web-flow","id":19864447},"commit":{"committer":{"email":"noreply@github.com"},"verification":{"verified":true,"reason":"valid"}},"parents":[{}]}'
 
     # (t) commit provenance: a commit by anyone but Dependabot, or an
     #     unverified one, or a one-parent github-actions[bot] commit, blocks.
@@ -20618,6 +20690,23 @@ GHSTUB
         "sweep gating (t): the warning names the short sha and the sanitized login"
     one_case t2 "" "[$(jq -c '.commit.verification.verified=false' <<<"$C_BOT")]"
     no_merge "(t2) an unverified Dependabot commit"
+    # A spoofed commit: the author EMAIL maps to dependabot[bot] (so the REST
+    # author is Dependabot) but the committer is the pusher, signed with their
+    # own key. Verified vouches for the committer, so only a web-flow
+    # committer with GitHub's noreply address and reason "valid" passes.
+    one_case t2a "" "[$(jq -c '.committer={login:"mallory",id:1} | .commit.committer.email="mallory@example.com"' <<<"$C_BOT")]"
+    no_merge "(t2a) a Dependabot-authored commit with a non-web-flow committer"
+    assert_contains "$oc_out" "blocked=1" "sweep gating (t2a): summary counts it as blocked"
+    one_case t2b "" "[$(jq -c '.committer.id=1' <<<"$C_BOT")]"
+    no_merge "(t2b) a web-flow committer login with the wrong committer id"
+    one_case t2c "" "[$(jq -c '.author.id=1' <<<"$C_BOT")]"
+    no_merge "(t2c) a dependabot[bot] author login with the wrong author id"
+    one_case t2d "" "[$(jq -c '.commit.committer.email="mallory@example.com"' <<<"$C_BOT")]"
+    no_merge "(t2d) a web-flow committer with a foreign committer email"
+    one_case t2e "" "[$(jq -c '.commit.verification.reason="unknown_key"' <<<"$C_BOT")]"
+    no_merge "(t2e) a verified commit whose reason is not valid"
+    one_case t2f "" "[$C_BOT]"
+    assert_contains "$oc_out" "merged=1" "sweep gating (t2f): a genuine Dependabot commit still merges"
     # A github-actions[bot] two-parent merge commit (what an older sweep's
     # `gh pr update-branch` pushed) is not accepted: BLOCKED (red) with the
     # recreate remedy, never merged, even with every check green and one from
@@ -20875,6 +20964,31 @@ test_health_reusable_parity() {
     fi
 }
 
+test_stale_claims() {
+    echo ""
+    echo "=== Test: stale-claims.js (node:test suite) ==="
+
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "stale claims: node_modules/yaml is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/stale-claims-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-stale-claims.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 15 is the suite's count, so a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 15 ]]; then
+        pass "stale claims: node:test suite is green ($pass_n passed)"
+    else
+        fail "stale claims: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=15): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 test_base_md_merge_window() {
     echo ""
     echo "=== Test: base-md-merge-window.js (node:test suite) ==="
@@ -20923,6 +21037,12 @@ test_drift_report_guidance_dir() {
     { "$REPO_ROOT/scripts/build-agents-md.sh" python; printf '\nOverlap fixture line.\n'; } >"$work/AGENTS.md"
     push_fleet_payload_fixture
     printf '{"JavaScript": 100}\n' >"$TEST_DIR/bare/fleetorg_repo-payload.languages.json"
+    printf '{"truncated":false,"tree":[{"path":"a.js","type":"blob","size":100,"sha":"x"}]}\n' >"$TEST_DIR/bare/fleetorg_repo-payload.tree.json"
+    : >"$TEST_DIR/bare/fleetorg_repo-payload.private"
+    mkdir -p "$work/.github"
+    printf 'version: 2\n' >"$work/.github/dependabot.yml"
+    printf '* text=auto\n' >"$work/.gitattributes"
+    push_fleet_payload_fixture
 
     # Unset: nothing is written.
     rm -rf "$gdir"; mkdir -p "$gdir"
@@ -20955,24 +21075,70 @@ test_drift_report_guidance_dir() {
         fail "guidance dir: sections file holds '$(cat "$stem.sections" 2>/dev/null)'"
     fi
     if grep -qF '"JavaScript"' "$stem.languages.json" 2>/dev/null; then
-        pass "guidance dir: the languages map is saved for a repo with sections"
+        pass "guidance dir: the languages map is saved"
     else
-        fail "guidance dir: languages file missing for a repo that requests sections"
+        fail "guidance dir: languages file missing"
+    fi
+    if [[ "$(jq -c . "$stem.tree.json" 2>/dev/null)" == '{"truncated":false,"tree":[{"path":"a.js","type":"blob","size":100}]}' ]]; then
+        pass "guidance dir: the tree is saved, trimmed to truncated and path/type/size"
+    else
+        fail "guidance dir: tree file holds '$(head -c 300 "$stem.tree.json" 2>/dev/null)'"
+    fi
+    if grep -qxF 'version: 2' "$stem.dependabot.yml" 2>/dev/null && grep -qxF '* text=auto' "$stem.gitattributes" 2>/dev/null; then
+        pass "guidance dir: dependabot.yml and .gitattributes are saved"
+    else
+        fail "guidance dir: dependabot.yml or gitattributes missing from $gdir"
+    fi
+    if [[ -e "$stem.private" && ! -s "$stem.private" ]]; then
+        pass "guidance dir: a private repo gets an empty .private marker"
+    else
+        fail "guidance dir: the private marker is missing or not empty"
     fi
 
-    # End to end: the overlap script reads the saved files and flags the
-    # python section on a repo GitHub reports no Python for.
-    local out="$TEST_DIR/guidance-overlap-e2e.md"
+    # End to end: language-fit.js reads the saved files and flags the python
+    # section on a repo GitHub reports no Python for. The repo is private, so
+    # the count shows and the file name does not.
+    local out="$TEST_DIR/language-fit-e2e.md"
     rc=0
-    node "$REPO_ROOT/scripts/guidance-overlap.js" "$gdir" > "$out" 2>&1 || rc=$?
-    if [[ "$rc" -eq 0 ]] && grep -qF '`fleetorg/repo-payload` requests `python`' "$out"; then
-        pass "guidance dir: guidance-overlap.js flags the section misfit from the saved files"
+    node "$REPO_ROOT/scripts/language-fit.js" "$gdir" > "$out" 2>&1 || rc=$?
+    if [[ "$rc" -eq 0 ]] && grep -qF '`fleetorg/repo-payload`: remove 1 section' "$out" && ! grep -qF 'a.js' "$out"; then
+        pass "guidance dir: language-fit.js flags the section misfit from the saved files, redacted"
     else
-        fail "guidance dir: guidance-overlap.js exited $rc: $(tr '\n' ' ' < "$out" | head -c 400)"
+        fail "guidance dir: language-fit.js exited $rc: $(tr '\n' ' ' < "$out" | head -c 400)"
     fi
 
+    # A confirmed read leaves no .unread marker.
+    if ! ls "$gdir"/*.unread >/dev/null 2>&1; then
+        pass "guidance dir: no .unread marker when every read succeeded"
+    else
+        fail "guidance dir: unexpected .unread markers: $(ls "$gdir"/*.unread | tr '\n' ' ')"
+    fi
+
+    # A failed read is a marker, never an absent file: no tree fixture gives a
+    # 404 on the tree call, and MOCK_CONTENTS_HTTP_FAIL fails every contents
+    # call with an HTTP 403 that is not a confirmed absence.
+    rm -f "$TEST_DIR/bare/fleetorg_repo-payload.tree.json"
+    rm -rf "$gdir"; mkdir -p "$gdir"
+    rc=0
+    DRIFT_GUIDANCE_DIR="$gdir" MOCK_CONTENTS_HTTP_FAIL="fleetorg_repo-payload" \
+    GITHUB_REPOSITORY_OWNER=fleetorg MOCK_BARE_DIR="$TEST_DIR/bare" \
+    REPOS_YML="$TEST_DIR/repos.yml" DRIFT_REPORT_OUTPUT="$rpt" \
+    PATH="$TEST_DIR/bin:$PATH" \
+    "$REPO_ROOT/scripts/drift-report.sh" >"$TEST_DIR/drift-guidance-dir.txt" 2>&1 || rc=$?
+    if [[ -e "$stem.tree.json.unread" && ! -e "$stem.tree.json" \
+          && -e "$stem.dependabot.yml.unread" && ! -e "$stem.dependabot.yml" \
+          && -e "$stem.gitattributes.unread" && ! -e "$stem.gitattributes" \
+          && ! -e "$stem.languages.json.unread" ]]; then
+        pass "guidance dir: failed reads write .unread markers and no data file"
+    else
+        fail "guidance dir: rc=$rc; saw $(ls "$gdir" | tr '\n' ' ')"
+    fi
+
+    # Every repo gets the language-fit files, even with no AGENTS.md read.
     cp "$saved/.agents-sync.yml" "$saved/AGENTS.md" "$work/"
-    rm -f "$TEST_DIR/bare/fleetorg_repo-payload.languages.json"
+    rm -rf "$work/.github" "$work/.gitattributes"
+    rm -f "$TEST_DIR/bare/fleetorg_repo-payload.languages.json" "$TEST_DIR/bare/fleetorg_repo-payload.tree.json" \
+        "$TEST_DIR/bare/fleetorg_repo-payload.private"
     push_fleet_payload_fixture
 }
 
@@ -20993,11 +21159,36 @@ test_guidance_overlap() {
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
 
-    # 11 is the suite's count, so a deleted test fails here.
-    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 11 ]]; then
+    # 9 is the suite's count, so a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 9 ]]; then
         pass "guidance overlap: node:test suite is green ($pass_n passed)"
     else
-        fail "guidance overlap: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=11): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "guidance overlap: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=9): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
+test_language_fit() {
+    echo ""
+    echo "=== Test: language-fit.js (node:test suite) ==="
+
+    if [[ ! -d "$REPO_ROOT/node_modules/yaml" ]]; then
+        fail "language fit: node_modules/yaml is missing — run \`npm ci\` first"
+        return
+    fi
+
+    local out="$TEST_DIR/language-fit-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-language-fit.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 24 is the suite's count, so a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 24 ]]; then
+        pass "language fit: node:test suite is green ($pass_n passed)"
+    else
+        fail "language fit: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=24): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
@@ -25213,6 +25404,11 @@ PY
 
 GATTR_LINE_T='.claude/hooks/*.sh text eol=lf'
 GATTR_COMMENT_T='# managed by _agent-guidance: hook scripts must stay LF for bash (see ADR 0019)'
+# The two linguist-vendored lines (ADR 0048), each with its comment, as a
+# printf format to append to an expectation: LF and CRLF spellings.
+GATTR_VEND_C='# managed by _agent-guidance: synced tooling is vendored, not this repo'"'"'s code (see ADR 0048)'
+GATTR_VEND_T="$GATTR_VEND_C\n.githooks/** linguist-vendored\n$GATTR_VEND_C\n.claude/hooks/** linguist-vendored\n"
+GATTR_VEND_CRLF_T="$GATTR_VEND_C\r\n.githooks/** linguist-vendored\r\n$GATTR_VEND_C\r\n.claude/hooks/** linguist-vendored\r\n"
 
 # gattr_git — git with no system config and no signing, so a test's answer
 # cannot depend on the machine running it (a system core.autocrlf, say).
@@ -25429,7 +25625,7 @@ setup_gattr_repos() {
         echo "# $name" > "$work/$name/README.md"
         case "$name" in
             repo-append|repo-protected) printf '*.png binary\n' > "$work/$name/.gitattributes" ;;
-            repo-present) printf '*.png binary\n  %s  \n' "$GATTR_LINE_T" > "$work/$name/.gitattributes" ;;
+            repo-present) printf '*.png binary\n  %s  \n.githooks/** linguist-vendored\n.claude/hooks/** linguist-vendored\n' "$GATTR_LINE_T" > "$work/$name/.gitattributes" ;;
             repo-crlf) printf '*.png binary\r\n*.jpg binary\r\n' > "$work/$name/.gitattributes" ;;
             repo-no-newline) printf '*.png binary' > "$work/$name/.gitattributes" ;;
             repo-star-minus-text) printf '* -text\n' > "$work/$name/.gitattributes" ;;
@@ -25472,6 +25668,7 @@ test_sync_gitattributes() {
     echo "=== Test: sync.sh maintains the hook-script LF line in .gitattributes ==="
 
     local bare="$TEST_DIR/gattr-bare" L="$GATTR_LINE_T" C="$GATTR_COMMENT_T"
+    local V="$GATTR_VEND_T" VR="$GATTR_VEND_CRLF_T"
     local out="$TEST_DIR/gattr-sync" before after rc sec got
     setup_gattr_repos "$bare"
 
@@ -25532,17 +25729,17 @@ test_sync_gitattributes() {
     else
         fail "gitattributes (sync): the run exits 0 — got $rc"
     fi
-    gattr_expect repo-none "$C\n$L\n" \
+    gattr_expect repo-none "$C\n$L\n$V" \
         "gitattributes (sync): created with the comment and the line"
-    gattr_expect repo-append "*.png binary\n$C\n$L\n" \
+    gattr_expect repo-append "*.png binary\n$C\n$L\n$V" \
         "gitattributes (sync): appended, every existing byte preserved"
-    gattr_expect repo-present "*.png binary\n  $L  \n" \
+    gattr_expect repo-present "*.png binary\n  $L  \n.githooks/** linguist-vendored\n.claude/hooks/** linguist-vendored\n" \
         "gitattributes (sync): already present (padded) — byte-identical"
-    gattr_expect repo-crlf "*.png binary\r\n*.jpg binary\r\n$C\r\n$L\r\n" \
+    gattr_expect repo-crlf "*.png binary\r\n*.jpg binary\r\n$C\r\n$L\r\n$VR" \
         "gitattributes (sync): a CRLF file is appended to with CRLF"
-    gattr_expect repo-no-newline "*.png binary\n$C\n$L\n" \
+    gattr_expect repo-no-newline "*.png binary\n$C\n$L\n$V" \
         "gitattributes (sync): a missing final newline is supplied before appending"
-    gattr_expect repo-star-minus-text "* -text\n$C\n$L\n" \
+    gattr_expect repo-star-minus-text "* -text\n$C\n$L\n$V" \
         "gitattributes (sync): appended after '* -text'"
 
     # Same commit as the rest of the delivery, not a second one.
@@ -25571,6 +25768,14 @@ test_sync_gitattributes() {
     else
         fail "gitattributes (sync): in the '* -text' repo the hooks get text eol=lf and README.md stays -text — got: $got"
     fi
+    got=$(gattr_git -C "$clone" check-attr linguist-vendored -- .githooks/agent-checks .claude/hooks/fleet-memory.sh README.md)
+    if [[ "$got" == *".githooks/agent-checks: linguist-vendored: set"* \
+          && "$got" == *"fleet-memory.sh: linguist-vendored: set"* \
+          && "$got" == *"README.md: linguist-vendored: unspecified"* ]]; then
+        pass "gitattributes (sync): synced tooling is linguist-vendored and README.md is not"
+    else
+        fail "gitattributes (sync): synced tooling is linguist-vendored and README.md is not — got: $got"
+    fi
 
     # A gitignored .gitattributes: warned, not written, and the rest delivered.
     if gattr_git -C "$bare/gattrorg_repo-ignored" cat-file -e main:.gitattributes 2>/dev/null; then
@@ -25585,10 +25790,10 @@ test_sync_gitattributes() {
     fi
 
     # The PR fallback carries it too, and says so.
-    gattr_expect repo-protected "*.png binary\n$C\n$L\n" \
+    gattr_expect repo-protected "*.png binary\n$C\n$L\n$V" \
         "gitattributes (sync, PR fallback): appended on the fallback branch" agents-md-sync/update
     got="$TEST_DIR/gattr-pr-bodies/gattrorg_repo-protected.body"
-    assert_prose_contains "$got" "This PR also adds one line to \`.gitattributes\`" \
+    assert_prose_contains "$got" "This PR also appends managed lines to \`.gitattributes\`" \
         "gitattributes (sync, PR fallback): the PR body names the .gitattributes change"
 
     # ── Idempotence: a second run changes nothing and commits nothing ──
@@ -25621,7 +25826,7 @@ test_sync_gitattributes() {
     assert_not_contains "$out-3-append" "Up to date — skipping." \
         "gitattributes (only the line missing): the repo is not skipped"
     got=$(gattr_git -C "$bare/gattrorg_repo-append" log -1 --format=%s main)
-    if [[ "$got" == "chore: pin the hook scripts to LF in .gitattributes" ]]; then
+    if [[ "$got" == "chore: update the managed .gitattributes lines" ]]; then
         pass "gitattributes (only the line missing): the commit's subject names the change"
     else
         fail "gitattributes (only the line missing): the commit's subject names the change — got '$got'"
@@ -25632,7 +25837,7 @@ test_sync_gitattributes() {
     else
         fail "gitattributes (only the line missing): the commit touches .gitattributes alone — got: $(tr '\n' ' ' <<< "$got")"
     fi
-    gattr_expect repo-append "*.png binary\n$C\n$L\n" \
+    gattr_expect repo-append "*.png binary\n$C\n$L\n$V" \
         "gitattributes (only the line missing): the pair is back, every other byte preserved"
 
     # ── Drift report after the sync ──
@@ -27071,6 +27276,429 @@ STUB
     fi
 }
 
+# The lint pass (templates/agent-checks/agent-checks, "Lint pass"): stub tools
+# on an isolated PATH emit canned output, so no real linter and no network is
+# needed. A line holding LINT_ERR makes a stub report an error on that line,
+# LINT_WARN a warning.
+test_agent_checks_lint() {
+    echo ""
+    echo "=== Test: agent-checks lint pass (required tier refuses, advisory warns, config and opt-outs) ==="
+    local repo="$TEST_DIR/ac-lint" out="$TEST_DIR/ac-lint-run" bindir="$TEST_DIR/ac-lint-bin" corebin="$TEST_DIR/ac-lint-core" log="$TEST_DIR/ac-lint-stub.log" rc base c
+    local -a g=(git -C "$repo" -c user.name=Example -c user.email=agent@example.com -c commit.gpgsign=false)
+    local -a AC_LINT_ENV=()
+    local AC_LINT_PATH=""
+    mkdir -p "$bindir" "$corebin"
+    # An isolated PATH: only the tools the runner needs, never a real linter.
+    for c in git awk sed grep tr head tail mktemp cat cut sort uname dirname basename id hostname date mv rm mkdir cp chmod wc find tar sha256sum ls ln node bash env xargs gzip; do
+        [[ -x "$corebin/$c" ]] || ln -s "$(command -v "$c")" "$corebin/$c" 2> /dev/null || true
+    done
+    cat > "$bindir/stub-lib" <<'STUB'
+# files <args...> — the arguments after `--`
+stub_files() { local a seen=false; for a in "$@"; do $seen && printf '%s\n' "$a"; [ "$a" = -- ] && seen=true; done; }
+# marker <file> <MARK> — line numbers holding the marker
+stub_lines() { grep -n -F -- "$2" "$1" | cut -d: -f1; }
+STUB
+    cat > "$bindir/shellcheck" <<'STUB'
+#!/usr/bin/env bash
+. "$(dirname "$0")/stub-lib"
+echo "shellcheck $*" >> "$STUB_LOG"
+[ -f .shellcheckrc ] && echo "shellcheck cfg .shellcheckrc" >> "$STUB_LOG"
+rc=0
+while IFS= read -r f; do
+  for n in $(stub_lines "$f" LINT_ERR); do echo "$f:$n:1: error: bad thing [SC1073]"; rc=1; done
+  for n in $(stub_lines "$f" LINT_WARN); do echo "$f:$n:1: note: meh [SC2086]"; rc=1; done
+done < <(stub_files "$@")
+exit $rc
+STUB
+    cat > "$bindir/ruff" <<'STUB'
+#!/usr/bin/env bash
+. "$(dirname "$0")/stub-lib"
+echo "ruff $*" >> "$STUB_LOG"
+req=false; case " $* " in *" --select E9,F63,F7,F82 "*) req=true ;; esac
+rc=0
+while IFS= read -r f; do
+  for n in $(stub_lines "$f" LINT_ERR); do echo "$f:$n:1: F821 Undefined name \`x\`"; rc=1; done
+  $req || for n in $(stub_lines "$f" LINT_WARN); do echo "$f:$n:1: F401 [*] unused"; rc=1; done
+done < <(stub_files "$@")
+echo "Found things."
+exit $rc
+STUB
+    cat > "$bindir/actionlint" <<'STUB'
+#!/usr/bin/env bash
+. "$(dirname "$0")/stub-lib"
+echo "actionlint $*" >> "$STUB_LOG"
+plain=true; case " $* " in *" -shellcheck "*) plain=false ;; esac
+rc=0
+while IFS= read -r f; do
+  for n in $(stub_lines "$f" LINT_ERR); do echo "$f:$n:1: bad expression [expression]"; rc=1; done
+  for n in $(stub_lines "$f" LINT_LABEL); do echo "$f:$n:1: label \"x\" is unknown [runner-label]"; rc=1; done
+  $plain || for n in $(stub_lines "$f" LINT_WARN); do echo "$f:$n:1: shellcheck reported issue in this script: SC2086:info [shellcheck]"; rc=1; done
+done < <(stub_files "$@")
+exit $rc
+STUB
+    cat > "$bindir/pwsh" <<'STUB'
+#!/usr/bin/env bash
+. "$(dirname "$0")/stub-lib"
+echo "pwsh $*" >> "$STUB_LOG"
+case " $* " in *" -Command "*) exit 0 ;; esac
+while [ $# -gt 0 ]; do case "$1" in -List) list=$2; shift ;; -Settings) echo "pwsh settings=$2" >> "$STUB_LOG"; shift ;; esac; shift; done
+while IFS= read -r f; do
+  for n in $(stub_lines "$f" LINT_ERR); do echo "$f:$n:1: Error: PSBadThing: bad thing"; done
+  for n in $(stub_lines "$f" LINT_WARN); do echo "$f:$n:1: Warning: PSMeh: meh"; done
+done < "$list"
+STUB
+    cat > "$bindir/ruby" <<'STUB'
+#!/usr/bin/env bash
+echo "ruby $*" >> "$STUB_LOG"
+f=${@: -1}
+if grep -qF LINT_ERR "$f"; then echo "$f:2: syntax error, unexpected end-of-input" >&2; exit 1; fi
+echo "Syntax OK"
+STUB
+    chmod +x "$bindir"/*
+    for c in git awk sed grep tr head tail mktemp cat cut sort uname dirname basename id hostname date mv rm mkdir cp chmod wc find tar sha256sum ls ln node bash env xargs gzip; do
+        ln -sf "$corebin/$c" "$bindir/$c" 2> /dev/null || true
+    done
+    git init -q -b main "$repo"
+    "${g[@]}" commit -q --allow-empty -m base
+    ac_lint_run() {   # <runner args...> — prints the exit code
+        local r=0
+        (cd "$repo" && env -u GITHUB_ACTIONS -u GITHUB_EVENT_NAME -u GITHUB_EVENT_PATH -u AGENT_CHECKS_LINT \
+            GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off STUB_LOG="$log" \
+            PATH="${AC_LINT_PATH:-$bindir}" ${AC_LINT_ENV[@]+"${AC_LINT_ENV[@]}"} \
+            "$corebin/bash" "$REPO_ROOT/templates/agent-checks/agent-checks" "$@") \
+            > "$out.out" 2> "$out.err" < /dev/null || r=$?
+        echo "$r"
+    }
+    ac_lint_reset() { "${g[@]}" rm -q -r -f --cached . > /dev/null 2>&1 || true; find "$repo" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +; : > "$log"; AC_LINT_ENV=(); AC_LINT_PATH=""; }
+    ac_lint_reset
+    mkdir -p "$repo/.github/workflows" "$repo/.githooks"
+
+    # ── required tier: one refusal per tool, whole-file, with path:line ──
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/a.sh"
+    printf 'x = 1\n# LINT_ERR\n' > "$repo/a.py"
+    printf 'on: push\n# LINT_ERR\n' > "$repo/.github/workflows/w.yml"
+    printf '# LINT_ERR\n' > "$repo/a.ps1"
+    printf 'var x = ;\n' > "$repo/a.js"
+    printf '# LINT_ERR\n' > "$repo/a.rb"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 1 ]] \
+       && grep -qF 'agent-checks: a.sh:2: shellcheck: bad thing [SC1073]' "$out.err" \
+       && grep -qF 'agent-checks: a.py:2: ruff: F821 Undefined name' "$out.err" \
+       && grep -qF 'agent-checks: .github/workflows/w.yml:2: actionlint: bad expression [expression]' "$out.err" \
+       && grep -qF 'agent-checks: a.ps1:1: PSScriptAnalyzer: PSBadThing: bad thing' "$out.err" \
+       && grep -qF "agent-checks: a.js:1: node --check: SyntaxError" "$out.err" \
+       && grep -qF 'agent-checks: a.rb:2: ruby -wc: ' "$out.err"; then
+        pass "lint (required): a shellcheck, ruff, actionlint, PSScriptAnalyzer, node --check and ruby -wc error each refuses with path:line"
+    else
+        fail "lint (required): each tool's error refuses with path:line — exit $rc: $(cat "$out.err")"
+    fi
+    # The ruff run that refuses is the explicit required select list, with the repo's excludes kept.
+    if grep -qF 'ruff check --no-cache --force-exclude --select E9,F63,F7,F82 --output-format=concise' "$log"; then
+        pass "lint (required): ruff runs with --select E9,F63,F7,F82 (syntax errors and undefined names, not unused imports)"
+    else
+        fail "lint (required): ruff runs with --select E9,F63,F7,F82 — log: $(cat "$log")"
+    fi
+    # The same F821 must not also print as a warning (the tiers do not overlap).
+    if ! grep -q 'warning.*F821\|warning.*SC1073\|warning.*bad expression' "$out.err"; then
+        pass "lint: a finding in the required tier is not repeated as an advisory warning"
+    else
+        fail "lint: a finding in the required tier is not repeated as an advisory warning: $(cat "$out.err")"
+    fi
+
+    # ── run log: lint refusals count as check names ──
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS -u AGENT_CHECKS_LINT GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        AGENT_CHECKS_LOG="$out.jsonl" STUB_LOG="$log" PATH="$bindir" "$corebin/bash" "$REPO_ROOT/templates/agent-checks/agent-checks" pre-commit) > /dev/null 2>&1 < /dev/null || rc=$?
+    if grep -q '"failed":\[[^]]*"lint-required-shell"' "$out.jsonl" && grep -q '"lint-required-python"' "$out.jsonl" \
+       && grep -q '"lint-required-workflow"' "$out.jsonl" && grep -q '"lint-required-javascript"' "$out.jsonl"; then
+        pass "lint: the run log names each refusal lint-required-<language>"
+    else
+        fail "lint: the run log names each refusal lint-required-<language> — $(cat "$out.jsonl" 2> /dev/null)"
+    fi
+
+    # ── advisory tier: warns, never changes the exit status ──
+    ac_lint_reset
+    mkdir -p "$repo/.github/workflows"
+    printf '#!/bin/bash\n# LINT_WARN\n' > "$repo/a.sh"
+    printf 'x = 1\n# LINT_WARN\n' > "$repo/a.py"
+    printf 'on: push\n# LINT_WARN\n# LINT_LABEL\n' > "$repo/.github/workflows/w.yml"
+    printf '# LINT_WARN\n' > "$repo/a.ps1"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 0 ]] \
+       && grep -qF 'agent-checks (warning): a.sh:2: shellcheck: note: meh [SC2086]' "$out.err" \
+       && grep -qF 'agent-checks (warning): a.py:2: ruff: F401 [*] unused' "$out.err" \
+       && grep -qF 'agent-checks (warning): .github/workflows/w.yml:2: actionlint: shellcheck reported issue' "$out.err" \
+       && grep -qF 'agent-checks (warning): .github/workflows/w.yml:3: actionlint: label "x" is unknown [runner-label]' "$out.err" \
+       && grep -qF 'agent-checks (warning): a.ps1:1: PSScriptAnalyzer: PSMeh: meh' "$out.err"; then
+        pass "lint (advisory): warnings print as agent-checks (warning) lines, a runner-label finding is advisory, and the exit status stays 0"
+    else
+        fail "lint (advisory): warnings print and the exit status stays 0 — exit $rc: $(cat "$out.err")"
+    fi
+    AC_LINT_ENV=(GITHUB_ACTIONS=true AGENT_CHECKS_ZIZMOR="$TEST_DIR/no-zizmor" AGENT_CHECKS_LINT_FETCH=/nonexistent)
+    rc=$(ac_lint_run pre-commit)
+    # (the workflow file also reaches zizmor, which has no python here: its own refusal, not lint's)
+    if grep -qF '::warning file=a.sh,line=2,title=agent-checks lint shellcheck::note: meh [SC2086]' "$out.err" && ! grep -qF 'lint-required' "$out.err"; then
+        pass "lint (advisory): in CI a warning is a ::warning file=,line= annotation"
+    else
+        fail "lint (advisory): in CI a warning is a ::warning file=,line= annotation — exit $rc: $(cat "$out.err")"
+    fi
+    AC_LINT_ENV=()
+
+    # ── changed lines only (pre-commit, ci); tree shows all ──
+    ac_lint_reset
+    printf '#!/bin/bash\n# LINT_WARN old\nx=1\n' > "$repo/old.sh"
+    "${g[@]}" add -A && "${g[@]}" commit -q -m "old.sh"
+    base=$("${g[@]}" rev-parse HEAD)
+    printf '#!/bin/bash\n# LINT_WARN old\nx=1\n# LINT_WARN new\n' > "$repo/old.sh"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 0 ]] && grep -qF 'old.sh:4: shellcheck' "$out.err" && ! grep -qF 'old.sh:2: shellcheck' "$out.err"; then
+        pass "lint (changed lines): pre-commit warns only on the staged hunk, not on older lines of the file"
+    else
+        fail "lint (changed lines): pre-commit warns only on the staged hunk — exit $rc: $(cat "$out.err")"
+    fi
+    "${g[@]}" commit -q -m "new line"
+    rc=$(ac_lint_run ci "$base" HEAD)
+    if [[ $rc -eq 0 ]] && grep -qF 'old.sh:4: shellcheck' "$out.err" && ! grep -qF 'old.sh:2: shellcheck' "$out.err"; then
+        pass "lint (changed lines): ci warns only on lines changed between base and head"
+    else
+        fail "lint (changed lines): ci warns only on lines changed between base and head — exit $rc: $(cat "$out.err")"
+    fi
+    rc=$(ac_lint_run tree HEAD)
+    if [[ $rc -eq 0 ]] && grep -qF 'old.sh:4: shellcheck' "$out.err" && grep -qF 'old.sh:2: shellcheck' "$out.err"; then
+        pass "lint (changed lines): tree mode reports every finding"
+    else
+        fail "lint (changed lines): tree mode reports every finding — exit $rc: $(cat "$out.err")"
+    fi
+    # The required tier covers the whole changed file: an old error refuses when any line is touched.
+    printf '#!/bin/bash\n# LINT_ERR old\nx=1\n# touched\n' > "$repo/old.sh"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 1 ]] && grep -qF 'agent-checks: old.sh:2: shellcheck: bad thing' "$out.err"; then
+        pass "lint (changed lines): a required-tier error on an untouched line of a changed file still refuses"
+    else
+        fail "lint (changed lines): a required-tier error anywhere in a changed file refuses — exit $rc: $(cat "$out.err")"
+    fi
+    # Advisory output is capped per file.
+    ac_lint_reset
+    { printf '#!/bin/bash\n'; for c in $(seq 1 25); do printf '# LINT_WARN %s\n' "$c"; done; } > "$repo/many.sh"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 0 && "$(grep -c 'many.sh:[0-9]*: shellcheck' "$out.err")" -eq 20 ]] && grep -qF 'many.sh: 5 more findings in this file are not shown' "$out.err"; then
+        pass "lint (advisory): at most 20 findings per file print, then a count of the rest"
+    else
+        fail "lint (advisory): at most 20 findings per file print, then a count — exit $rc: $(grep -c 'many.sh' "$out.err") lines"
+    fi
+
+    # ── a missing tool locally: one notice, no refusal, no network ──
+    ac_lint_reset
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/a.sh"
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/b.sh"
+    "${g[@]}" add -A
+    "${g[@]}" commit -q -m "two shell files"
+    printf '# touched\n' >> "$repo/a.sh"; printf '# touched\n' >> "$repo/b.sh"
+    "${g[@]}" add -A
+    AC_LINT_PATH="$corebin"
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 0 && "$(grep -c 'lint skipped: shellcheck is not on PATH' "$out.err")" -eq 1 ]]; then
+        pass "lint (missing tool): locally it skips the language with ONE notice and does not refuse"
+    else
+        fail "lint (missing tool): locally one notice, no refusal — exit $rc: $(cat "$out.err")"
+    fi
+    AC_LINT_PATH=""
+
+    # ── CI installs a pinned tool; a bad digest or a failed download refuses ──
+    if [[ "$(uname -s)" == Linux ]]; then
+        local pkg="$TEST_DIR/ac-lint-pkg" arch digest
+        arch=$(uname -m); [[ $arch == amd64 ]] && arch=x86_64; [[ $arch == arm64 ]] && arch=aarch64
+        mkdir -p "$pkg/shellcheck-v0.11.0"
+        # Only the named member is extracted, so the stub carries its helpers inline.
+        { head -n 1 "$bindir/shellcheck"; cat "$bindir/stub-lib"; tail -n +2 "$bindir/shellcheck" | grep -v '^\. '; } > "$pkg/shellcheck-v0.11.0/shellcheck"
+        chmod +x "$pkg/shellcheck-v0.11.0/shellcheck"
+        tar -czf "$pkg.tar.gz" -C "$pkg" shellcheck-v0.11.0
+        digest=$(sha256sum "$pkg.tar.gz" | cut -d' ' -f1)
+        cat > "$TEST_DIR/ac-lint-fetch" <<'STUB'
+#!/usr/bin/env bash
+echo "$1" >> "$FETCH_LOG"
+[ -z "${FETCH_FAIL:-}" ] || exit 22
+cp "$FETCH_TARBALL" "$2"
+STUB
+        chmod +x "$TEST_DIR/ac-lint-fetch"
+        rm -f "$TEST_DIR/ac-lint-fetch.log"
+        AC_LINT_PATH="$corebin"
+        AC_LINT_ENV=(GITHUB_ACTIONS=true AGENT_CHECKS_ZIZMOR="$TEST_DIR/no-zizmor" AGENT_CHECKS_LINT_FETCH="$TEST_DIR/ac-lint-fetch" FETCH_LOG="$TEST_DIR/ac-lint-fetch.log" FETCH_TARBALL="$pkg.tar.gz" AGENT_CHECKS_LINT_TEST_SHA256="$digest")
+        rc=$(ac_lint_run tree HEAD)
+        if [[ $rc -eq 1 ]] && grep -qF '::error title=agent-checks lint-required-shell::agent-checks: a.sh:2: shellcheck: bad thing' "$out.err" \
+           && grep -qF "koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.$arch.tar.gz" "$TEST_DIR/ac-lint-fetch.log"; then
+            pass "lint (CI): a missing shellcheck is downloaded from its pinned release URL, digest-verified, and run"
+        else
+            fail "lint (CI): a missing shellcheck is downloaded from its pinned release, verified and run — exit $rc: $(cat "$out.err")"
+        fi
+        # The pinned digest is the real one, so the stub archive (not the test override) is refused.
+        AC_LINT_ENV=(GITHUB_ACTIONS=true AGENT_CHECKS_ZIZMOR="$TEST_DIR/no-zizmor" AGENT_CHECKS_LINT_FETCH="$TEST_DIR/ac-lint-fetch" FETCH_LOG="$TEST_DIR/ac-lint-fetch.log" FETCH_TARBALL="$pkg.tar.gz")
+        rc=$(ac_lint_run tree HEAD)
+        if [[ $rc -eq 1 ]] && grep -qF '::error title=agent-checks lint-tool-install::' "$out.err" && grep -qF 'did not match its pinned sha256' "$out.err" \
+           && ! grep -qF 'shellcheck: bad thing' "$out.err"; then
+            pass "lint (CI): a download whose sha256 does not match the pin is refused and never run"
+        else
+            fail "lint (CI): a download whose sha256 does not match the pin is refused — exit $rc: $(cat "$out.err")"
+        fi
+        AC_LINT_ENV=(GITHUB_ACTIONS=true AGENT_CHECKS_ZIZMOR="$TEST_DIR/no-zizmor" AGENT_CHECKS_LINT_FETCH="$TEST_DIR/ac-lint-fetch" FETCH_LOG="$TEST_DIR/ac-lint-fetch.log" FETCH_TARBALL="$pkg.tar.gz" FETCH_FAIL=1)
+        rc=$(ac_lint_run tree HEAD)
+        if [[ $rc -eq 1 ]] && grep -qF 'shellcheck could not be downloaded from https://github.com/koalaman/shellcheck/' "$out.err"; then
+            pass "lint (CI): a failed download refuses (fail closed) with a clear message"
+        else
+            fail "lint (CI): a failed download refuses — exit $rc: $(cat "$out.err")"
+        fi
+        # A platform with no pin (a Windows runner) skips with a notice, not a refusal.
+        mkdir -p "$TEST_DIR/ac-lint-winuname"
+        printf '#!/bin/sh\ncase "$1" in -s) echo MINGW64_NT-10.0 ;; -m) echo x86_64 ;; *) echo MINGW64_NT-10.0 ;; esac\n' > "$TEST_DIR/ac-lint-winuname/uname"
+        chmod +x "$TEST_DIR/ac-lint-winuname/uname"
+        rm -f "$TEST_DIR/ac-lint-fetch.log"
+        AC_LINT_PATH="$TEST_DIR/ac-lint-winuname:$corebin"
+        AC_LINT_ENV=(GITHUB_ACTIONS=true AGENT_CHECKS_ZIZMOR="$TEST_DIR/no-zizmor" AGENT_CHECKS_LINT_FETCH="$TEST_DIR/ac-lint-fetch" FETCH_LOG="$TEST_DIR/ac-lint-fetch.log" FETCH_TARBALL="$pkg.tar.gz")
+        rc=$(ac_lint_run tree HEAD)
+        if [[ $rc -eq 0 ]] && ! grep -qF 'lint-tool-install' "$out.err" \
+           && grep -qF 'no pinned release binary exists for this platform (MINGW64_NT-10.0 x86_64)' "$out.err" \
+           && [[ ! -e "$TEST_DIR/ac-lint-fetch.log" ]]; then
+            pass "lint (CI): a platform with no pinned binary skips with a notice and downloads nothing"
+        else
+            fail "lint (CI): a platform with no pinned binary skips with a notice — exit $rc: $(cat "$out.err")"
+        fi
+        AC_LINT_PATH="$corebin"
+        # With the tool opted out, CI downloads nothing.
+        mkdir -p "$repo/.agent-checks"
+        printf 'shell=off\n' > "$repo/.agent-checks/lint.conf"
+        "${g[@]}" add -A && "${g[@]}" commit -q -m "opt out of shell lint"
+        rm -f "$TEST_DIR/ac-lint-fetch.log"
+        rc=$(ac_lint_run tree HEAD)
+        if [[ $rc -eq 0 && ! -e "$TEST_DIR/ac-lint-fetch.log" ]]; then
+            pass "lint (CI): a language turned off in lint.conf downloads nothing"
+        else
+            fail "lint (CI): a language turned off in lint.conf downloads nothing — exit $rc: $(cat "$out.err")"
+        fi
+        AC_LINT_ENV=(); AC_LINT_PATH=""
+    else
+        echo "  SKIP: lint (CI) install tests need Linux release binaries"
+    fi
+
+    # ── a repo's own config wins ──
+    ac_lint_reset
+    printf 'x = 1\n# LINT_WARN\n' > "$repo/plain.py"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if grep -qF -- '--select F,B,PLE,PLW,W605,E711' "$log" && grep -qF 'agent-checks (warning): plain.py:2: ruff' "$out.err"; then
+        pass "lint (config): with no ruff config the advisory tier uses the fleet's default rule set"
+    else
+        fail "lint (config): the advisory tier uses the fleet's default rule set — $(cat "$log")"
+    fi
+    ac_lint_reset
+    mkdir -p "$repo/pkg"
+    printf '[tool.ruff]\nline-length = 100\n' > "$repo/pyproject.toml"
+    printf 'x = 1\n# LINT_WARN\n' > "$repo/pkg/m.py"
+    printf '#!/bin/bash\n' > "$repo/s.sh"; printf 'disable=SC2086\n' > "$repo/.shellcheckrc"
+    printf '# LINT_WARN\n' > "$repo/a.ps1"; printf '@{ ExcludeRules = @() }\n' > "$repo/PSScriptAnalyzerSettings.psd1"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 0 ]] \
+       && grep -qF 'ruff check --no-cache --force-exclude --output-format=concise -- pkg/m.py' "$log" \
+       && ! grep -F 'ruff check' "$log" | grep -F -- '--ignore' | grep -qF 'pkg/m.py' \
+       && grep -qF 'shellcheck cfg .shellcheckrc' "$log" \
+       && grep -qF 'pwsh settings=./PSScriptAnalyzerSettings.psd1' "$log"; then
+        pass "lint (config): a repo's ruff table, .shellcheckrc and PSScriptAnalyzerSettings.psd1 are used, from the content being checked"
+    else
+        fail "lint (config): a repo's own ruff, shellcheck and PSScriptAnalyzer config are used — exit $rc: $(cat "$log")"
+    fi
+
+    # ── lint.conf opt-outs ──
+    ac_lint_reset
+    mkdir -p "$repo/.agent-checks"
+    printf '#!/bin/bash\n# LINT_ERR\n# LINT_WARN\n' > "$repo/a.sh"
+    printf 'x = 1\n# LINT_ERR\n# LINT_WARN\n' > "$repo/a.py"
+    printf 'python=off\n' > "$repo/.agent-checks/lint.conf"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 1 ]] && grep -qF 'a.sh:2: shellcheck' "$out.err" && ! grep -qF 'a.py' "$out.err" && ! grep -qF 'ruff' "$log"; then
+        pass "lint (opt-out): python=off skips ruff entirely and leaves shell linted"
+    else
+        fail "lint (opt-out): python=off skips ruff — exit $rc: $(cat "$out.err")"
+    fi
+    printf '# a comment\nrequired = off\n' > "$repo/.agent-checks/lint.conf"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 0 ]] && grep -qF 'agent-checks (warning): a.sh:3: shellcheck' "$out.err"; then
+        pass "lint (opt-out): required=off removes the refusals and keeps the warnings"
+    else
+        fail "lint (opt-out): required=off removes the refusals — exit $rc: $(cat "$out.err")"
+    fi
+    printf 'advisory=off\n' > "$repo/.agent-checks/lint.conf"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 1 ]] && grep -qF 'agent-checks: a.sh:2: shellcheck' "$out.err" && ! grep -qF 'agent-checks (warning): a.sh' "$out.err"; then
+        pass "lint (opt-out): advisory=off keeps the refusals and removes the warnings"
+    else
+        fail "lint (opt-out): advisory=off removes the warnings — exit $rc: $(cat "$out.err")"
+    fi
+    mkdir -p "$repo/gen"; printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/gen/g.sh"; printf 'x = 1\n# LINT_ERR\n' > "$repo/gen/g.py"
+    printf 'shell.required=off\nshell.advisory=on\npython.advisory=off\nnonsense\npython=maybe\n$(touch %s/pwned)=off\nexclude=gen/*\nexclude=a;b\n' "$TEST_DIR" > "$repo/.agent-checks/lint.conf"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 1 ]] && grep -qF 'a.py:2: ruff' "$out.err" && grep -qF 'agent-checks (warning): a.sh:3: shellcheck' "$out.err" && ! grep -qF 'agent-checks: a.sh' "$out.err" \
+       && [[ "$(grep -c 'lint.conf line [0-9]* is not' "$out.err")" -eq 4 ]] && [[ ! -e "$TEST_DIR/pwned" ]] && ! grep -qF 'gen/' "$out.err"; then
+        pass "lint (opt-out): per-language tier keys and exclude= globs work; unknown lines warn once each and are never executed"
+    else
+        fail "lint (opt-out): per-language tier keys work, unknown lines warn and are never executed — exit $rc: $(cat "$out.err")"
+    fi
+    rm -f "$repo/.agent-checks/lint.conf"; "${g[@]}" add -A
+    AC_LINT_ENV=(AGENT_CHECKS_LINT=off)
+    : > "$log"
+    rc=$(ac_lint_run pre-commit)
+    AC_LINT_ENV=()
+    if [[ $rc -eq 0 && ! -s "$log" ]]; then
+        pass "lint (opt-out): AGENT_CHECKS_LINT=off runs no linter"
+    else
+        fail "lint (opt-out): AGENT_CHECKS_LINT=off runs no linter — exit $rc: $(cat "$log")"
+    fi
+
+    # ── untrusted names, skips and file types ──
+    ac_lint_reset
+    mkdir -p "$repo/fixtures" "$repo/node_modules/p"
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/-dash.sh"
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/a b.sh"
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/\$(touch pwned).sh"
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/$(printf 'NEW\nLINEFILE').sh"
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/fixtures/x.sh"
+    printf '#!/bin/bash\n# LINT_ERR\n' > "$repo/node_modules/p/x.sh"
+    printf '#!/usr/bin/env zsh\n# LINT_ERR\n' > "$repo/z.sh"
+    printf '#!/usr/bin/env bash\n# LINT_ERR\n' > "$repo/runme"
+    printf 'plain text LINT_ERR\n' > "$repo/NOTES"
+    printf '# LINT_ERR\n' > "$repo/target.sh.txt"
+    ln -s target.sh.txt "$repo/link.sh"
+    printf -- '---\n---\nvar x = ;\n' > "$repo/page.js"
+    "${g[@]}" add -A
+    rc=$(ac_lint_run pre-commit)
+    if [[ $rc -eq 1 ]] \
+       && grep -qF 'agent-checks: -dash.sh:2: shellcheck' "$out.err" \
+       && grep -qF 'agent-checks: a b.sh:2: shellcheck' "$out.err" \
+       && grep -qF 'agent-checks: $(touch pwned).sh:2: shellcheck' "$out.err" \
+       && grep -qF 'agent-checks: runme:2: shellcheck' "$out.err" \
+       && ! grep -qE 'fixtures|node_modules|z\.sh|NOTES|link\.sh|page\.js|LINEFILE' "$out.err" \
+       && [[ ! -e "$repo/pwned" ]]; then
+        pass "lint (names): spaces, leading dashes and shell metacharacters in names are data; fixtures, vendored, newline-named, symlinked, zsh and front-matter files are skipped; an extensionless shebang file is linted"
+    else
+        fail "lint (names): untrusted names are data and the skip rules hold — exit $rc: $(cat "$out.err")"
+    fi
+    # Every tool call passes the files after `--`.
+    if grep -F 'shellcheck ' "$log" | grep -vF -- ' -- ' | grep -q .; then
+        fail "lint (names): shellcheck is always called with -- before the file names"
+    else
+        pass "lint (names): shellcheck is always called with -- before the file names"
+    fi
+    ac_lint_reset
+}
+
 # The dated-phrasing warning pass (templates/agent-checks/dated-phrasing.js):
 # it warns on dated history and migration-relative phrasing in the prose of
 # the Markdown agents load, never in code, quotes, HTML, URLs, link text or an
@@ -27485,6 +28113,25 @@ test_ci_scope() {
     scope_case "the ledger with an unlisted reader runs everything" "scope=full run=true" "bump" \
         docs/agent-checks-lessons.md
 
+    # A `git grep` that ERRORS (exit 128: a missing object in a partial or
+    # shallow checkout) is not "no file names this doc": it must widen to full
+    # scope, never skip the shard. Only exit 1 means no match.
+    local shim="$TEST_DIR/ci-scope-git-shim" real_git
+    real_git=$(command -v git)
+    mkdir -p "$shim"
+    printf '#!/usr/bin/env bash\nfor a in "$@"; do [[ "$a" == grep ]] && exit 128; done\nexec %q "$@"\n' \
+        "$real_git" > "$shim/git"
+    chmod +x "$shim/git"
+    git -C "$dir" checkout -q "$base"
+    printf 'more\n' >> "$dir/docs/unread.md"
+    git -C "$dir" add -A; git -C "$dir" commit -qm grep-error
+    jq -n --arg b "$base" --arg h "$(git -C "$dir" rev-parse HEAD)" \
+        '{pull_request:{base:{sha:$b},head:{sha:$h}}}' > "$ev"
+    out=$(PATH="$shim:$PATH" GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$ev" MATRIX_GROUPS="bump" \
+        bash "$REPO_ROOT/scripts/ci-scope.sh" "$dir" | tr '\n' ' ')
+    [[ "$out" == "scope=full run=true " ]] && pass "ci-scope: a git grep error runs everything" \
+        || fail "ci-scope: a git grep error runs everything — got '$out'"
+
     out=$(GITHUB_EVENT_NAME=workflow_dispatch bash "$REPO_ROOT/scripts/ci-scope.sh" "$dir" | tr '\n' ' ')
     [[ "$out" == "scope=full run=true " ]] && pass "ci-scope: a dispatch runs everything" \
         || fail "ci-scope: a dispatch runs everything — got '$out'"
@@ -27879,7 +28526,9 @@ GROUP_self_hosted=(
     test_health_reusable_parity
     test_routine_merge_gate
     test_base_md_merge_window
+    test_stale_claims
     test_guidance_overlap
+    test_language_fit
     test_eval_protected
     test_fleet_guidance_mirror
     test_check_agent_markdown
@@ -28210,11 +28859,121 @@ GROUP_gitattr=(
     test_sync_gitattributes
 )
 
+# ── Dependabot config delivery (repos.yml dependabot_config, ADR 0047) ────────
+# dcorg in a MOCK_BARE_DIR of its own; a switch-off run first (it also
+# delivers AGENTS.md), then the real run.
+setup_dc_repos() {
+    local bare_dir="$1" work="$TEST_DIR/dc-work" name
+    rm -rf "$bare_dir" "$work"
+    mkdir -p "$bare_dir" "$work"
+    for name in dc-actions dc-none dc-drift dc-multi dc-nomanifest dc-cmscall dc-current cms-platform; do
+        gattr_git init -q --bare --initial-branch=main "$bare_dir/dcorg_$name"
+        gattr_git init -q --initial-branch=main "$work/$name"
+        echo "# $name" > "$work/$name/README.md"
+        mkdir -p "$work/$name/.github/workflows" "$work/$name/.githooks/dated-phrasing"
+        echo "name: CI" > "$work/$name/.github/workflows/ci.yml"
+        echo '{}' > "$work/$name/.githooks/dated-phrasing/package.json"
+        case "$name" in
+            dc-actions|cms-platform|dc-cmscall)
+                printf 'version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: "/"\n    schedule:\n      interval: daily\n' \
+                    > "$work/$name/.github/dependabot.yml" ;;
+            dc-drift) printf "# Managed by _agent-guidance's templates/dependabot/\nOLD-CONTENT: true\n" > "$work/$name/.github/dependabot.yml" ;;
+            dc-multi) printf 'version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: "/"\n    schedule:\n      interval: daily\n  - package-ecosystem: npm\n    directory: "/"\n    schedule:\n      interval: weekly\n' \
+                    > "$work/$name/.github/dependabot.yml" ;;
+            dc-nomanifest)
+                rm -rf "$work/$name/.githooks"
+                printf 'version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: "/"\n    schedule:\n      interval: daily\n' \
+                    > "$work/$name/.github/dependabot.yml" ;;
+            dc-current) cp "$REPO_ROOT/templates/dependabot/dependabot.yml" "$work/$name/.github/dependabot.yml" ;;
+        esac
+        [[ "$name" == dc-cmscall ]] && printf 'name: deps\njobs:\n  a:\n    uses: Adam-S-Daniel/cms-platform/.github/workflows/dependabot-auto-merge.yml@v1\n' > "$work/$name/.github/workflows/deps.yml"
+        gattr_git -C "$work/$name" add -A
+        gattr_git -C "$work/$name" commit -q -m init
+        gattr_git -C "$work/$name" push -q "$bare_dir/dcorg_$name" HEAD:main 2>/dev/null
+    done
+}
+
+test_sync_dependabot_config() {
+    echo ""
+    echo "=== Test: sync.sh delivers the managed dependabot.yml to actions-only repos ==="
+
+    local bare="$TEST_DIR/dc-bare" out="$TEST_DIR/dc-sync" rc got
+    local tmpl="$REPO_ROOT/templates/dependabot/dependabot.yml" cfg=".github/dependabot.yml"
+    setup_dc_repos "$bare"
+    dc_show() { gattr_git -C "$bare/dcorg_$1" show "main:$2" 2>/dev/null; }
+    printf 'exclude: []\ndefault_sections: []\n' > "$TEST_DIR/dc-repos-off.yml"
+    printf 'exclude: []\ndefault_sections: []\ndependabot_config:\n  deliver: true\n' > "$TEST_DIR/dc-repos-on.yml"
+    run_dc_sync() {   # <repos.yml> <log>
+        GITHUB_REPOSITORY_OWNER=dcorg MOCK_BARE_DIR="$bare" \
+        MOCK_PR_BODY_DIR="$TEST_DIR/dc-pr-bodies" REPOS_YML="$1" \
+        PATH="$TEST_DIR/bin:$PATH" "$REPO_ROOT/scripts/sync.sh" > "$2" 2>&1
+    }
+
+    rc=0; run_dc_sync "$TEST_DIR/dc-repos-off.yml" "$out-off.log" || rc=$?
+    if [[ $rc -eq 0 ]] && ! cmp -s <(dc_show dc-actions "$cfg") "$tmpl"; then
+        pass "dependabot config (off): with deliver unset the file is left alone"
+    else
+        fail "dependabot config (off): with deliver unset the file is left alone — exit $rc"
+    fi
+
+    rc=0; run_dc_sync "$TEST_DIR/dc-repos-on.yml" "$out-on.log" || rc=$?
+    [[ $rc -eq 0 ]] && pass "dependabot config (sync): the run exits 0" || fail "dependabot config (sync): the run exits 0 — got $rc"
+
+    if cmp -s <(dc_show dc-actions "$cfg") "$tmpl"; then
+        pass "dependabot config (sync): an actions-only file is replaced by the template"
+    else
+        fail "dependabot config (sync): an actions-only file is replaced by the template"
+    fi
+    # dc-none has no file at all: setup gave it none, so it must be added.
+    if cmp -s <(dc_show dc-none "$cfg") "$tmpl"; then
+        pass "dependabot config (sync): a repo with no dependabot.yml gets the template"
+    else
+        fail "dependabot config (sync): a repo with no dependabot.yml gets the template"
+    fi
+    if cmp -s <(dc_show dc-drift "$cfg") "$tmpl"; then
+        pass "dependabot config (sync): a drifted file with the managed header is overwritten"
+    else
+        fail "dependabot config (sync): a drifted file with the managed header is overwritten"
+    fi
+    got=$(dc_show dc-multi "$cfg")
+    if [[ "$got" == *"package-ecosystem: npm"* ]] && ! cmp -s <(echo "$got") "$tmpl"; then
+        pass "dependabot config (sync): a multi-ecosystem file is left alone"
+    else
+        fail "dependabot config (sync): a multi-ecosystem file is left alone"
+    fi
+    assert_contains "$out-on.log" "hand-maintained, not delivered" "dependabot config (sync): the multi-ecosystem skip is logged"
+    got=$(dc_show dc-nomanifest "$cfg")
+    if [[ "$got" == "version: 2"* ]]; then
+        pass "dependabot config (sync): a repo without the dated-phrasing manifest is left alone"
+    else
+        fail "dependabot config (sync): a repo without the dated-phrasing manifest is left alone"
+    fi
+    assert_contains "$out-on.log" "has no .githooks/dated-phrasing/package.json" "dependabot config (sync): the missing manifest is logged"
+    if [[ "$(dc_show cms-platform "$cfg")" == "version: 2"* && "$(dc_show dc-cmscall "$cfg")" == "version: 2"* ]]; then
+        pass "dependabot config (sync): cms-platform and a cms-platform caller are left alone"
+    else
+        fail "dependabot config (sync): cms-platform and a cms-platform caller are left alone"
+    fi
+    got=$(gattr_git -C "$bare/dcorg_dc-drift" log -1 --format=%B main)
+    if [[ "$got" == "chore: update the managed Dependabot config"* && "$got" == *"Updates .github/dependabot.yml"* ]]; then
+        pass "dependabot config (sync): the commit says the file was updated and is managed"
+    else
+        fail "dependabot config (sync): the commit says the file was updated and is managed — got: $(head -1 <<< "$got")"
+    fi
+    got=$(gattr_git -C "$bare/dcorg_dc-current" log -1 --format=%s main)
+    if [[ "$got" != *"Dependabot"* ]]; then
+        pass "dependabot config (sync): a file already equal to the template gets no commit"
+    else
+        fail "dependabot config (sync): a file already equal to the template gets no commit"
+    fi
+}
+
 # The Dependabot auto-merge delivery lane: amorg in a MOCK_BARE_DIR of its
 # own; steps run in order (switch off → dry run → sync → re-run).
 GROUP_automerge=(
     test_actions_lock_entry_helper
     test_sync_dependabot_auto_merge
+    test_sync_dependabot_config
 )
 
 # The agent-checks delivery lane (ADR 0021): acorg in a MOCK_BARE_DIR of its
@@ -28226,6 +28985,7 @@ GROUP_agent_checks=(
     test_agent_checks_agents_md_size
     test_agent_checks_ci_annotation
     test_agent_checks_gha_injection
+    test_agent_checks_lint
     test_agent_checks_dated_phrasing
     test_agent_checks_dated_phrasing_lock
     test_self_agent_checks
