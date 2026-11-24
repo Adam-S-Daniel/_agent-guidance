@@ -27084,7 +27084,7 @@ test_agent_checks_privacy() {
     ac_priv_run() {   # <ref> <env...> — pre-push of <ref> at $sha, new branch; sets rc, out, err
         local ref=$1; shift
         rc=0
-        (cd "$repo" && env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
             PRIVACY_DENYLIST_FILE="$base/no-such-file" "$@" \
             bash "$runner" pre-push origin https://example.com/r.git \
             <<< "refs/heads/x $sha $ref $zero") > "$base/out" 2> "$base/err" || rc=$?
@@ -27108,7 +27108,7 @@ test_agent_checks_privacy() {
     git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q --allow-empty -m "see /home/exampleuser/notes"
     local msg_sha; msg_sha=$(git -C "$repo" rev-parse HEAD)
     rc=0
-    (cd "$repo" && env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
         PRIVACY_DENYLIST_FILE="$base/no-such-file" AGENT_CHECKS_LOCAL_USER=exampleuser AGENT_CHECKS_LOCAL_HOST= \
         bash "$runner" pre-push origin https://example.com/r.git \
         <<< "refs/heads/x $msg_sha refs/heads/ok-name $zero") > "$base/out" 2> "$base/err" || rc=$?
@@ -27123,7 +27123,7 @@ test_agent_checks_privacy() {
     git -C "$repo" -c user.name=Example -c user.email=agent@examplebox.example.net commit -q --allow-empty -m "plain message"
     local id_sha; id_sha=$(git -C "$repo" rev-parse HEAD)
     rc=0
-    (cd "$repo" && env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
         PRIVACY_DENYLIST_FILE="$base/no-such-file" AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST=examplebox \
         bash "$runner" pre-push origin https://example.com/r.git \
         <<< "refs/heads/x $id_sha refs/heads/ok-name $zero") > "$base/out" 2> "$base/err" || rc=$?
@@ -27145,7 +27145,7 @@ test_agent_checks_privacy() {
     git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q --allow-empty -m "mentions example-secret-word here"
     local dl_sha; dl_sha=$(git -C "$repo" rev-parse HEAD)
     rc=0
-    (cd "$repo" && env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
         AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST= PRIVACY_DENYLIST_FILE="$base/denylist.txt" \
         bash "$runner" pre-push origin https://example.com/r.git \
         <<< "refs/heads/x $dl_sha refs/heads/ok-name $zero") > "$base/out" 2> "$base/err" || rc=$?
@@ -27180,7 +27180,7 @@ test_agent_checks_privacy() {
     # The default file under HOME is read.
     mkdir -p "$base/home/.config"; cp "$base/denylist.txt" "$base/home/.config/privacy-denylist.txt"
     rc=0
-    (cd "$repo" && env -u PRIVACY_DENYLIST_FILE GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+    (cd "$repo" && env -u GITHUB_ACTIONS -u PRIVACY_DENYLIST_FILE GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
         AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST= HOME="$base/home" \
         bash "$runner" pre-push origin https://example.com/r.git \
         <<< "refs/heads/x $sha refs/heads/example-secret-word $zero") > "$base/out" 2> "$base/err" || rc=$?
@@ -27211,7 +27211,7 @@ test_agent_checks_privacy() {
 
     # The run log gets the id and nothing sensitive.
     rc=0
-    (cd "$repo" && env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG="$base/runs.jsonl" \
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG="$base/runs.jsonl" \
         AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST=examplebox PRIVACY_DENYLIST_FILE="$base/no-such-file" \
         bash "$runner" pre-push origin https://example.com/r.git \
         <<< "refs/heads/x $sha refs/heads/fix-examplebox-thing $zero") > /dev/null 2>&1 || rc=$?
@@ -27243,7 +27243,7 @@ test_agent_checks_privacy() {
 ac_size_run() {   # <repo> <out prefix> <runner args...> — runs the runner, prints its exit code
     local repo=$1 out=$2 rc=0
     shift 2
-    (cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
         AGENT_CHECKS_DATED_PHRASING_MODULES="$TEST_DIR/ac-size-no-modules" \
         bash "$REPO_ROOT/templates/agent-checks/agent-checks" "$@") \
         > "$out.out" 2> "$out.err" < /dev/null || rc=$?
