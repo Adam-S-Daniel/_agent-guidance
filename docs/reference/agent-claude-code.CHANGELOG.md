@@ -30,6 +30,25 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-24 — 2.1.331 through 2.1.331
+
+- **Checked:** 2026-11-24T02:20Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.331](https://github.com/anthropics/claude-code/releases/tag/v2.1.331), published 2026-11-23T21:34Z
+- **Window:** v2.1.331 (published 2026-11-23T21:34Z), the first stable release after v2.1.330: 1 release, 135 bullets (the 1 in group 1 is indexed). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; the section is the top one); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 16 in `repos.yml` `cron_coverage.fleet`, each read at the head of its local checkout (`_agent-guidance` 265e16f, `acsi-kit` b7d3dfc, `adam-agentskills` eeeb02f, `adam-agentskills-private` 5ff1765, `adamdaniel.ai` a7457fa, `ai-usage-dashboard` 42d25cd, `claude-memory-map` 8df34c3, `cms-platform` de728f4, `fastmail-actions` c115644, `jodidaniel.com` c77cd16, `repo-settings` c7a30e6, `rss-inator` 1c61886, `security-alerts` 125d3d1, `skills-evals` 4dcf6db, `verify-actions-lock` 03ef6b9, `wsl-automation` 3ef89b4), and assessed with a fleet grep; none was re-fetched from the remote this run.
+
+#### 1. Prompt-audit sweep trigger
+
+- [v2.1.331](https://github.com/anthropics/claude-code/releases/tag/v2.1.331), published 2026-11-23T21:34Z (bullet 2.1.331/23)
+  > Fixed an interrupted or failed plugin update leaving a partial plugin folder that later loaded with skills or other components missing (anthropics/claude-code#102186)
+
+**Issues:** [_agent-guidance#631](https://github.com/Adam-S-Daniel/_agent-guidance/issues/631) (no label). The fire workflow's comment, if any, is on the issue.
+
+**Prompt-audit sweep:** requested through group 1. Bullet 2.1.331/23 changes what loads on a surface the fleet uses (plugins), as the 2.1.326/325 fix did. Considered and not counted: 2.1.331/7 (`optionalDependencies` in plugin manifests, an additive field no fleet manifest sets), 2.1.331/2 (`claude doctor` gains an API connectivity section, which does not change its instruction-file checks) and 2.1.331/55 (managed `extraKnownMarketplaces` will auto-update by default from November 30, 2026; `adam-agentskills`' `setup.sh` writes the key to user settings, not managed settings). No `Prompt-audit sweep trigger:` issue was open at the start of the run ([_agent-guidance#596](https://github.com/Adam-S-Daniel/_agent-guidance/issues/596) is closed).
+
+No other group met the name-the-surface bar. Considered and dropped: the Code Mode additions and fixes and the `gen_ai.*` trace span fields (no fleet file uses them); the PushNotification headless-run fix (only a stored 2.1.231 fixture in `skills-evals` names the tool); `PermissionDenied` hook `retry` wording and `PermissionRequest` `Skill(name:*)` saving (no fleet hook uses either); the Workflow agent shell cleanup; and all the `[VSCode]` and Windows-only bullets (the fleet uses the terminal and cloud CLI).
+
 ### 2026-11-21 — 2.1.330 through 2.1.330
 
 - **Checked:** 2026-11-21T02:10Z, [release log](https://github.com/anthropics/claude-code/releases)

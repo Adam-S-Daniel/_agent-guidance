@@ -30,6 +30,18 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-24 — 0.172.0 through 0.172.0
+
+- **Checked:** 2026-11-24T02:25Z, [release log](https://github.com/openai/codex/releases)
+- **Latest version in the change log:** [0.172.0](https://github.com/openai/codex/releases/tag/rust-v0.172.0), published 2026-11-24T00:03Z
+- **Window:** 0.172.0 (2026-11-24T00:03Z), the first stable release after 0.171.0: 1 stable release, 15 note bullets (new features, bug fixes, documentation, chores) plus a pull request list, none indexed (no group). Pre-releases (`-alpha`) excluded. The publish time is read from the tag page's `datetime` attribute, in UTC.
+- **Source text:** the GitHub release list page 1 and the tag page; page 1 included `rust-v0.171.0`, the previous entry's last version.
+- **Repos considered:** all 16 in `repos.yml` `cron_coverage.fleet`, each read at the head of its local checkout (heads as in the Claude Code entry of the same date).
+
+No group met the name-the-surface bar. The notes cover thread links, Tab completion for slash commands, agent command center navigation, lazily started optional MCP servers, a per-tool approval reviewer, Bedrock Runtime selection, `codex exec resume` restoring saved sandbox permissions, remote-session paths, provider error reporting, the bundled `openai-docs` skill and Code Mode gRPC. Considered and dropped: `codex exec resume` (fleet uses of `codex exec` are in `register-codex-hook.sh`, the memory-audit evidence files and `wsl-automation`'s remote-control checks, none of which resume a session) and the lazily started MCP servers (no fleet file configures a stdio MCP server for Codex).
+
+**Issues:** none.
+
 ### 2026-11-20 — 0.171.0 through 0.171.0
 
 - **Checked:** 2026-11-20T02:15Z, [release log](https://github.com/openai/codex/releases)
