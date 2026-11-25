@@ -174,6 +174,14 @@ blocked comments. The on-hold stop overrides step 7 below.
 8. **Finish with a summary:** the issues taken, the PR links, the blocked
    issues with why, and each issue moved to `needs-thread` with its link. If there were no candidates, say so and end.
 
+**Any other session working an `agent-ready` issue claims it first.** A
+project thread, or any session the owner points at an issue, swaps
+`agent-ready` for `agent-working` before it starts, the same claim as step 2,
+so this worker's step 2 skips it at once. `scripts/live-work.js` only sees a
+thread once it comments or opens a PR, which can be an hour in. The thread
+removes the claim when it stops without a PR; with one, step 6 and "Stale
+claims" handle it as for this worker's own claims.
+
 ## Skill removal issues
 
 skills-evals' removal bot (`scripts/retire_skill.py`) files one when a
