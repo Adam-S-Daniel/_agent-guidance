@@ -75,7 +75,8 @@ blocked comments. The on-hold stop overrides step 7 below.
 1. **List candidates.** Run
    `gh search issues --label agent-ready --state open --owner Adam-S-Daniel --owner jodidaniel`,
    keep only issues in fleet repos (above), exclude `on-hold` issues and
-   issues with a held linked PR, sort oldest first, then run
+   issues with a held linked PR before the 3-item limit, sort oldest first,
+   then run
    `node scripts/live-work.js <owner>/<repo>#<n> ...` (from the
    `_agent-guidance` checkout) on the candidates and drop every `live` one,
    naming it in the summary as `live: <reason>` (an open PR references it,
