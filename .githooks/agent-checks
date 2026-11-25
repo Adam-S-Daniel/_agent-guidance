@@ -193,12 +193,16 @@ CODEX_PROJECT_DOC_MAX_BYTES=32768
 # even to an empty value, replace the lookup (the tests set them). A name that
 # is empty, unavailable or generic is not checked: a user shorter than 3
 # characters or one of the names in local_generic_users; a host shorter than 4
-# characters, localhost, or 12 or more lowercase hex digits (a container id).
+# characters, localhost, one of local_generic_hosts, or 12 or more lowercase
+# hex digits (a container id).
 # Under GitHub Actions (GITHUB_ACTIONS=true) the check never runs: a runner has
 # no personal identity, and a refusal must not print one to a public log. The
 # refusal names the path and line numbers only, never the identity; the run log
 # gets the id and nothing else. Both names are matched as literal text.
 local_generic_users=" root runner user ubuntu agent codex node vscode dev admin administrator codespace gitpod git nobody "
+# Hostnames that are ordinary words or stock image names, so a commit message
+# or file naming them ("move to ubuntu-latest", "fix the build") is not a leak.
+local_generic_hosts=" ubuntu debian fedora centos alpine arch raspberrypi build main master dev devbox server desktop laptop workstation runner home test "
 local_user=""
 local_host=""
 local_user_re=""
@@ -243,7 +247,7 @@ local_identity_init() {
     case "$local_generic_users" in *" $lower "*) ;; *) local_user=$u ;; esac
   fi
   lower=$(local_lower "$h")
-  if [ "${#h}" -ge 4 ] && [ "$lower" != localhost ]; then
+  if [ "${#h}" -ge 4 ] && [ "$lower" != localhost ] && [[ "$local_generic_hosts" != *" $lower "* ]]; then
     case "$lower" in
       *[!0-9a-f]*) local_host=$h ;;
       *) [ "${#h}" -ge 12 ] || local_host=$h ;;
@@ -302,9 +306,9 @@ check_local_identity() {
 # name and the message and author and committer identity of every commit the
 # push adds, against two sources of patterns:
 #   always       the names local-identity uses: the account name in a home path
-#                and the hostname (as a whole word, with - and _ counting as
-#                separators, as reported, all upper or all lower case, in a ref
-#                name, a message or an identity line);
+#                and the hostname (as a whole word in any case, with - and _
+#                counting as separators, in a ref name, a message or an
+#                identity line);
 #   when present the denylist: PRIVACY_DENYLIST (newline-separated patterns),
 #                else the file PRIVACY_DENYLIST_FILE names, else
 #                ~/.config/privacy-denylist.txt. Its patterns are Python regular
@@ -338,23 +342,25 @@ privacy_denylist_present() {
 # pipe into grep -q, so a long message cannot race the reader.
 privacy_local_hit() {
   if [ -n "$local_user_re" ] && LC_ALL=C grep -q -E -e "$local_user_re" <<< "$1"; then return 0; fi
-  if [ -n "$local_host_word_re" ] && LC_ALL=C grep -q -E -e "$local_host_word_re" <<< "$1"; then return 0; fi
+  if [ -n "$local_host_word_re" ] && LC_ALL=C grep -q -i -E -e "$local_host_word_re" <<< "$1"; then return 0; fi
   return 1
 }
 
 # privacy_push_ref <remote> <remote_ref> <local_oid> <remote_oid> — check one
 # pushed ref: its name, and the commits the push adds.
 privacy_push_ref() {
-  local remote=$1 ref=$2 new=$3 old=$4 commits sha short out rc places place_hits="" privacy_script=${dated_dir:-.}/privacy-denylist.py
+  # $1, the remote, is not used: commits any remote already has are public,
+  # so a push to a fresh fork must not re-check them either.
+  local ref=$2 new=$3 old=$4 commits sha short out rc places place_hits="" privacy_script=${dated_dir:-.}/privacy-denylist.py
   note_ran privacy
   local_identity_init
   # Only commits the remote has nowhere: a branch that merged or rebased onto
   # main would otherwise drag main's already-public commits in, and no one can
   # reword those.
   if known_commit "$old"; then
-    commits=$(git rev-list "$new" --not "$old" --remotes="$remote" 2> /dev/null) || commits=""
+    commits=$(git rev-list "$new" --not "$old" --remotes 2> /dev/null) || commits=""
   else
-    commits=$(git rev-list "$new" --not --remotes="$remote" 2> /dev/null) || commits=""
+    commits=$(git rev-list "$new" --not --remotes 2> /dev/null) || commits=""
   fi
   if [ -n "$local_user_re$local_host_re" ]; then
     if privacy_local_hit "${ref#refs/*/}"; then place_hits="the ref name"; fi
@@ -384,7 +390,7 @@ privacy_push_ref() {
   if [ "$rc" = 1 ] && [ "${out#FAILED:}" = "$out" ]; then rc=2; fi
   case "$rc" in
     0|3) ;;
-    1) problem privacy "refusing this push: a denylisted term is in a ref name or commit the push would publish, and a pushed ref name or commit message is public for good. Fix the branch name (git branch -m) or reword the commit (git commit --amend, or git rebase -r), then push again. The places and pattern numbers follow (the number is the line of your denylist that fired; the text is never printed): $places" ;;
+    1) problem privacy "refusing this push: a denylisted term is in a ref name or commit the push would publish, and a pushed ref name or commit message is public for good. Fix the branch name (git branch -m) or reword the commit (git commit --amend, or git rebase -r), then push again. The places and pattern numbers follow (the number counts your denylist's patterns from 1, skipping comment and blank lines; the text is never printed): $places" ;;
     *) problem privacy "the privacy denylist could not be checked (privacy-denylist.py exited $rc: an unreadable or invalid denylist, or git failing), so this push is held. Run python3 $privacy_script --repo . --ref <branch> to see the error, or fix the file." ;;
   esac
   return 0
