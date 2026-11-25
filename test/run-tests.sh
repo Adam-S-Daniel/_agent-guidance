@@ -27236,6 +27236,41 @@ test_agent_checks_privacy() {
         || fail "privacy-denylist.py: a bad commit id exits 2 — exit $rc: $out"
 }
 
+# pre-push refuses a push to the lock bumper's branch, because a commit the
+# bumper did not make strands its pull request; deleting that branch, which is
+# the way to free it, and pushing to any other branch still pass.
+test_agent_checks_bump_branch_push() {
+    echo ""
+    echo "=== Test: agent-checks pre-push refuses a push to skills-lock-bump/update ==="
+    local runner="$REPO_ROOT/templates/agent-checks/agent-checks"
+    local repo="$TEST_DIR/ac-bump-branch" zero sha rc
+    zero=0000000000000000000000000000000000000000
+    git init -q "$repo"
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q --allow-empty -m base
+    sha=$(git -C "$repo" rev-parse HEAD)
+    rc=0; (cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null AGENT_CHECKS_LOG=off bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "refs/heads/work $sha refs/heads/skills-lock-bump/update $zero") >/dev/null 2>"$TEST_DIR/ac-bump-branch.err" || rc=$?
+    if [[ $rc -eq 1 ]] && grep -qF 'refusing to push to skills-lock-bump/update' "$TEST_DIR/ac-bump-branch.err"; then
+        pass "agent-checks bump branch: a push to skills-lock-bump/update is refused"
+    else
+        fail "agent-checks bump branch: a push to skills-lock-bump/update is refused — exit $rc: $(cat "$TEST_DIR/ac-bump-branch.err")"
+    fi
+    rc=0; (cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null AGENT_CHECKS_LOG=off bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "(delete) $zero refs/heads/skills-lock-bump/update $sha") >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks bump branch: deleting skills-lock-bump/update passes"
+    else
+        fail "agent-checks bump branch: deleting skills-lock-bump/update passes — exit $rc"
+    fi
+    rc=0; (cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null AGENT_CHECKS_LOG=off bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "refs/heads/work $sha refs/heads/skills-lock-bump/other $zero") >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks bump branch: a push to another branch passes"
+    else
+        fail "agent-checks bump branch: a push to another branch passes — exit $rc"
+    fi
+}
+
 # agents-md-size: a change that leaves the root AGENTS.md over 32,768 bytes
 # (Codex's project_doc_max_bytes, where it silently truncates) is refused in
 # every event, measured in bytes; a change that does not touch it passes even
@@ -29160,6 +29195,7 @@ GROUP_agent_checks=(
     test_agent_checks_guard
     test_agent_checks_persistent_delete
     test_agent_checks_privacy
+    test_agent_checks_bump_branch_push
     test_agent_checks_agents_md_size
     test_agent_checks_ci_annotation
     test_agent_checks_gha_injection

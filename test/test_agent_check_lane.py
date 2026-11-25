@@ -673,7 +673,7 @@ class RunLogTests(LaneTestCase):
         [entry] = self.entries()
         self.assertEqual(entry["event"], "pre-push")
         self.assertEqual(entry["checks"], expected_checks(
-            ["staged-index", "push-to-default", "persistent-delete", "privacy", "rules-dir", "secret-file", "skill-shell"], declared_lessons()))
+            ["staged-index", "push-to-default", "persistent-delete", "bump-branch-push", "privacy", "rules-dir", "secret-file", "skill-shell"], declared_lessons()))
         self.assertEqual(entry["failed"], ["push-to-default"])
 
     def test_repo_local_check_is_logged(self):
@@ -938,6 +938,7 @@ class CheckIdTests(unittest.TestCase):
     def test_core_check_ids(self):
         ids = {ident for ident, _ in problem_calls(canonical_runner(RUNNER))}
         self.assertLessEqual({"rules-dir", "secret-file", "skill-shell", "staged-index", "push-to-default", "persistent-delete",
+                              "bump-branch-push",
                               "repo-local", "pr-tldr", "local-identity", "privacy"}, ids)
 
     def test_lesson_arms_and_lesson_checks_agree(self):
