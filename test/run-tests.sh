@@ -14511,10 +14511,10 @@ test_prompt_audit_sweep() {
     local pass_n fail_n
     pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
     fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
-    if [[ "$rc" -eq 0 && "$pass_n" == "23" && "$fail_n" == "0" ]]; then
-        pass "prompt-audit sweep policy: 23 passed"
+    if [[ "$rc" -eq 0 && "$pass_n" == "24" && "$fail_n" == "0" ]]; then
+        pass "prompt-audit sweep policy: 24 passed"
     else
-        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=23, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
+        fail "prompt-audit sweep policy: exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, pass=24, fail=0): $(tail -20 "$out" | tr '\n' ' ')"
     fi
 }
 
