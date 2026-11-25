@@ -213,4 +213,8 @@ def main(
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as exc:  # noqa: BLE001 - any crash must read as "could not run", never as a match
+        print(f"ERROR: privacy denylist: {type(exc).__name__}", file=sys.stderr)
+        sys.exit(EXIT_ERROR)

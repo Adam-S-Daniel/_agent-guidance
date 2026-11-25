@@ -27221,6 +27221,64 @@ test_agent_checks_privacy() {
         fail "agent-checks privacy: the run log records the id, ran and failed, and no name — exit $rc"
     fi
 
+    # Regressions from the independent review of PR #638.
+    # A hostname that is part of an ordinary word, or of the author's name, is
+    # not a hit: only a whole word is.
+    ac_priv_run refs/heads/ci-rebuilds AGENT_CHECKS_LOCAL_HOST=build AGENT_CHECKS_LOCAL_USER=
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks privacy: a hostname inside a longer word in a branch name is not a hit"
+    else
+        fail "agent-checks privacy: a hostname inside a longer word in a branch name is not a hit — exit $rc: $err"
+    fi
+    git -C "$repo" reset -q --hard "$sha"
+    git -C "$repo" -c user.name="Examplehost Person" -c user.email=agent@example.com commit -q --allow-empty -m "Rebuild the cache"
+    local word_sha; word_sha=$(git -C "$repo" rev-parse HEAD)
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        PRIVACY_DENYLIST_FILE="$base/no-such-file" AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST=build \
+        bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "refs/heads/x $word_sha refs/heads/ok-name $zero") > "$base/out" 2> "$base/err" || rc=$?
+    err=$(cat "$base/err")
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks privacy: a hostname inside a word of a message is not a hit"
+    else
+        fail "agent-checks privacy: a hostname inside a word of a message is not a hit — exit $rc: $err"
+    fi
+    # Commits the remote already has (main merged into a branch) are not
+    # checked: no one can reword them.
+    local pub="$base/pub.git" pub_sha feat_sha
+    git init -q --bare "$pub"
+    git -C "$repo" reset -q --hard "$sha"
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q --allow-empty -m "Merge pull request #5 from owner/fix-examplebox-thing"
+    pub_sha=$(git -C "$repo" rev-parse HEAD)
+    git -C "$repo" push -q --no-verify "$pub" "$pub_sha:refs/heads/main"
+    git -C "$repo" fetch -q "$pub" "+refs/heads/main:refs/remotes/origin/main"
+    git -C "$repo" checkout -q -b feat "$sha"
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q --allow-empty -m "feature work"
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com merge -q --no-edit origin/main
+    feat_sha=$(git -C "$repo" rev-parse HEAD)
+    git -C "$repo" checkout -q --detach
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        PRIVACY_DENYLIST_FILE="$base/no-such-file" AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST=examplebox \
+        bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "refs/heads/feat $feat_sha refs/heads/feat $sha") > "$base/out" 2> "$base/err" || rc=$?
+    err=$(cat "$base/err")
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks privacy: a commit the remote already has is not checked"
+    else
+        fail "agent-checks privacy: a commit the remote already has is not checked — exit $rc: $err"
+    fi
+    # A checker crash (here an overflowing repeat count) holds the push as
+    # "could not be checked", never as a denylist hit.
+    printf 'a{99999999999}\n' > "$base/crash.txt"
+    ac_priv_run refs/heads/ok-name AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST= PRIVACY_DENYLIST_FILE="$base/crash.txt"
+    if [[ $rc -eq 1 && "$err" == *"could not be checked"* && "$err" != *"denylisted term"* ]]; then
+        pass "agent-checks privacy: a checker crash reads as could-not-check, not as a match"
+    else
+        fail "agent-checks privacy: a checker crash reads as could-not-check, not as a match — exit $rc: $err"
+    fi
+
     # The checker's own interface (reused by a CI-mode check): exit codes and output.
     rc=0; out=$(env -u PRIVACY_DENYLIST HOME="$base/empty-home" python3 "$checker" --repo "$repo" --ref refs/heads/x 2>&1) || rc=$?
     [[ $rc -eq 3 && -z "$out" ]] && pass "privacy-denylist.py: no denylist exits 3 and prints nothing" \
