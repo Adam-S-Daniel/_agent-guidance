@@ -66,6 +66,7 @@ a page.
 | [0048](0048-sync-marks-synced-tooling-linguist-vendored.md) | The sync marks its tooling `linguist-vendored` in each repo's `.gitattributes` |
 | [0049](0049-code-quality-comes-from-managed-linters-not-codeql.md) | Code quality comes from centrally managed linters, not CodeQL's quality suite |
 | [0050](0050-agent-checks-lints-in-two-tiers.md) | agent-checks lints every changed file in two tiers: a few errors refuse, the rest warn |
+| [0051](0051-the-fleet-worker-merges-the-kits-re-sync-pull-requests.md) | The fleet worker merges the kit's re-sync pull requests |
 
 ## Format
 

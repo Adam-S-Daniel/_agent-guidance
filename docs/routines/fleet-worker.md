@@ -614,6 +614,94 @@ fixed. A merge the API refuses, a `FINDINGS` review, a hook pin bump
 that fails item 1's checks, a failed item 5, or item 6's exit 2 goes to
 the owner under step 3.
 
+<!-- kit-only:begin -->
+**The kit's re-sync pull requests.** The adoption kit follows its source
+repos through pull requests that an App opens, so the agent-change rule
+never applied to them, and a green one waited two days for a person
+(`_agent-guidance` #644). The agent-change rule covers a third kind, in one
+repo, for the maintenance role
+([ADR 0051](../decisions/0051-the-fleet-worker-merges-the-kits-re-sync-pull-requests.md)).
+This block is the whole rule; the kit's export removes it from the copy
+adopters get, so keep it between its two marker lines.
+
+**Configuration.** Read `kit_resync` from this repo's `repos.yml` on
+`origin/main`: `repo` is the kit's repo name and `app_slug` is the slug of
+the GitHub App that opens its re-sync PRs. The App is named only there. If
+the key, `repo` or `app_slug` is missing or empty, or `repo` is not listed
+under `cron_coverage.fleet`, merge nothing under this block, treat each PR
+it would have covered as needing the owner (step 3), and put this line in
+the summary: `Kit re-sync: not configured (repos.yml needs kit_resync.repo
+and kit_resync.app_slug)`.
+
+**Which PRs.** A PR is this kind when all of these hold, each read fresh:
+
+1. It is in the repo `kit_resync.repo` names, its base is that repo's
+   default branch, and its head is `resync/auto` or starts with
+   `resync-fix/`, on a branch of that same repo, never a fork.
+2. Its author's login is `<app_slug>[bot]` and the author's `type` is
+   `Bot`. A PR from one of those branches with any other author goes to the
+   owner.
+3. It is labeled `agent-authored` and auto-merge is not armed.
+4. Every changed file is one the re-sync writes. For `resync/auto`: under
+   `export/manifests/`, `starter/` or `docs/`. For `resync-fix/*`, also
+   under `export/patches/`, `export/overlay/` or `library/`, or one of
+   `export/DECISIONS.md`, `bootstrap/content-catalog.json` and a `.txt`
+   list under `export/tests/`. A PR that changes anything else (a workflow,
+   the export's own code, a test, a setup script) goes to the owner.
+5. It changes neither `export/manifests/agentskills-private.yml` nor any
+   file under `starter/agent-skills-private/`. The kit's CI cannot read
+   the private source, so nothing proves those files, and moving the
+   private pin is the owner's decision.
+6. Every pin it moves names a commit its source merged. For each
+   `source_sha`, and each `sha` under `imports`, that differs from the base
+   branch's copy of the manifest, `GET
+   /repos/<owner>/<source>/compare/<sha>...<default branch>` must report
+   `ahead` or `identical`, where `<source>` is the manifest's `source` (the
+   import's `repo`) under the kit's own owner. A sha that is not on the
+   source's default branch goes to the owner.
+7. Items 2 to 6 of the agent-change rule hold (not a draft, no `on-hold`,
+   head pushed at least an hour before the run, every check green with a
+   required check and a passing test run, the eval-protection gate).
+
+**The review.** As step 2d's, by a fresh subagent on the current head, with
+the same `FINDINGS` stamp rule and the same shared cap, and with these
+differences. `starter/` and `library/` are generated: the kit's required
+`test` check fails unless each public `starter/` tree equals a fresh export
+of its pinned source, and item 6 shows each pin was merged by its own
+source's review. So give the reviewer the diff of every changed file
+outside `starter/` and `library/` and the read-only checkout, and tell it
+that step 2d's bullets apply to that diff, not to the generated trees (a
+source's own hook, workflow or merge rule arriving in `starter/` is not a
+finding). It answers `CLEAN` only if, as well:
+
+- in a manifest, nothing changes but pins, unless the PR is a `resync-fix/*`
+  one, where each changed `edits` entry, patch or overlay file still does
+  what its `why` says against the source's new text, and none is dropped
+  while the source still has the thing it changed;
+- no guard, leak check or test list is loosened or emptied, an allowlist
+  gains an entry only for a path that was never in the kit, and no entry is
+  added to a known-misses list;
+- a `resync-fix/*` PR adds a re-pin section to `export/DECISIONS.md` that
+  records each departure its manifest or patch changes make;
+- for each page the body lists under "Pages to review", no statement on the
+  page is made wrong by the changed `starter/` files it describes (the
+  reviewer reads both in the checkout), or the PR changes the page to match;
+- a new skill or guidance section has a tier in
+  `bootstrap/content-catalog.json`;
+- nothing in the diff, the body or a commit message quotes or summarizes a
+  file of the private source.
+
+**The merge.** For a PR meeting every item whose review answered `CLEAN`,
+merge it in the same run with `expected_head_sha` set to the reviewed head,
+as a merge commit, and comment `Merged by the fleet worker: a kit re-sync
+that passed CI and an independent review (ADR 0051).` In step 3 such a PR
+is treated as the hook pin bump is: when this block does not merge it (a
+failed item, a `FINDINGS` review, a refused merge, no configuration), it is
+"ready for his merge" and gets `needs-owner`; while it waits for its hour,
+its review or a retry, it is not. The daily re-sync moves `resync/auto` to a
+new head, so a refused one is reviewed again when its head changes.
+<!-- kit-only:end -->
+
 ### 2e. Review and merge a skill removal
 
 A `retire` verdict in skills-evals removes the skill with no human in the

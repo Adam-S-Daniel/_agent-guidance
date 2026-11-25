@@ -93,6 +93,11 @@ const mutations = {
   issuefirst: [worker, 'Start it before\n   reading any PR.', 'Start it after\n   the PR pass.'],
   sameRunSkip: [worker, "**It skips the PRs this run's issue pass opened**", "**It reviews the PRs this run's issue pass opened**"],
   oldestfirst: [worker, '**The oldest candidate is taken first**', '**Any candidate may be taken first**'],
+  kitauthor: [worker, "Its author's login is `<app_slug>[bot]` and the author's `type` is\n   `Bot`.", 'Its author may be anyone.'],
+  kitconfig: [worker, 'merge nothing under this block', 'merge them under this block anyway'],
+  kitprivate: [worker, 'It changes neither `export/manifests/agentskills-private.yml` nor any', 'It may change `export/manifests/agentskills-private.yml` or any'],
+  kitpins: [worker, 'A sha that is not on the\n   source\'s default branch goes to the owner.', 'A sha need not be on the\n   source\'s default branch.'],
+  kitmarker: [worker, '<!-- kit-only:end -->\n', ''],
   argv: ['.github/workflows/prompt-audit-fire.yml', "curl -sS --config - -o", 'curl -sS -H "Authorization: Bearer $FIRE_BEARER" -o'],
 };
 
@@ -372,6 +377,59 @@ test('fleet worker merges reviewed agent-made changes and the hook pin bump (ADR
   const adr41 = 'docs/decisions/0041-the-fleet-worker-merges-reviewed-agent-made-changes.md';
   includes(prose(section(adr41, 'Decision')), ['independent review', 'Opting out is a draft or `on-hold`.', 'still wait for the owner', 'never approves anything']);
   includes(read('docs/decisions/0010-the-hook-pin-is-re-pinned-from-here.md'), ['Superseded in part by\n[0041]']);
+});
+
+test("fleet worker merges the kit's re-sync pull requests, named only in repos.yml (ADR 0051)", () => {
+  // One balanced block, each marker alone on its line: the kit's export
+  // removes whatever sits between them from the copy adopters get.
+  const text = read(worker);
+  const begin = '<!-- kit-only:begin -->', end = '<!-- kit-only:end -->';
+  assert.deepEqual(text.split('\n').filter(line => line.includes('kit-only:')), [begin, end]);
+  const from = text.indexOf(begin), to = text.indexOf(end);
+  const block = text.slice(from + begin.length, to);
+  const outside = text.slice(0, from) + text.slice(to + end.length);
+  // The whole rule is inside the block, and inside step 2d.
+  for (const word of ['resync/auto', 'resync-fix/', 'kit_resync', 'ADR 0051']) {
+    assert.ok(block.includes(word), `the block lacks ${word}`);
+    assert.ok(!outside.includes(word), `${word} appears outside the kit-only block`);
+  }
+  const step = '### 2d. Review and merge an agent-made change or a hook pin bump';
+  assert.ok(text.indexOf(step) < from && to < text.indexOf('### 2e. Review and merge a skill removal'));
+  includes(prose(md.parse(block, {})), [
+    'for the maintenance role',
+    'merge nothing under this block',
+    '`Kit re-sync: not configured (repos.yml needs kit_resync.repo and kit_resync.app_slug)`',
+    'its head is `resync/auto` or starts with `resync-fix/`, on a branch of that same repo, never a fork',
+    "Its author's login is `<app_slug>[bot]` and the author's `type` is `Bot`.",
+    'with any other author goes to the owner',
+    'It is labeled `agent-authored` and auto-merge is not armed.',
+    'A PR that changes anything else (a workflow, the export\'s own code, a test, a setup script) goes to the owner.',
+    'It changes neither `export/manifests/agentskills-private.yml` nor any file under `starter/agent-skills-private/`.',
+    'must report `ahead` or `identical`',
+    "A sha that is not on the source's default branch goes to the owner.",
+    'Items 2 to 6 of the agent-change rule hold',
+    'with the same `FINDINGS` stamp rule and the same shared cap',
+    'not to the generated trees',
+    'no guard, leak check or test list is loosened or emptied, an allowlist gains an entry only for a path that was never in the kit',
+    'quotes or summarizes a file of the private source',
+    '`expected_head_sha` set to the reviewed head',
+    'a kit re-sync that passed CI and an independent review (ADR 0051).',
+    'is treated as the hook pin bump is',
+  ]);
+  // The repo and the App are configuration: repos.yml names them, the spec
+  // and the ADR do not name the App, and the block does not name the repo.
+  const repos = YAML.parse(read('repos.yml'));
+  const kit = repos.kit_resync;
+  assert.deepEqual(Object.keys(kit).sort(), ['app_slug', 'repo']);
+  for (const key of ['repo', 'app_slug']) assert.match(kit[key], /^[A-Za-z0-9][A-Za-z0-9._-]*$/, `kit_resync.${key}`);
+  assert.ok(repos.cron_coverage.fleet.includes(kit.repo), 'kit_resync.repo is not under cron_coverage.fleet');
+  const adr51 = 'docs/decisions/0051-the-fleet-worker-merges-the-kits-re-sync-pull-requests.md';
+  for (const name of [worker, adr51]) assert.ok(!read(name).includes(kit.app_slug), `${name} names the App; it belongs in repos.yml only`);
+  assert.ok(!block.includes(kit.repo), 'the block names the kit repo; it belongs in repos.yml only');
+  includes(prose(section(adr51, 'Decision')), ['behind the same independent review as 0041', '`repos.yml` names them under `kit_resync`', 'goes to the owner', 'The kit does not ship this rule.']);
+  includes(prose(section(adr51, 'Consequences')), ['The generated trees are merged unread.', 'it goes to the owner']);
+  includes(read('docs/decisions/0041-the-fleet-worker-merges-reviewed-agent-made-changes.md'), ['Widened by [0051]']);
+  includes(read(index), ['| [0051](0051-the-fleet-worker-merges-the-kits-re-sync-pull-requests.md) |']);
 });
 
 test('fleet worker removes skills the eval verdict retires (ADR 0044)', () => {

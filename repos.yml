@@ -451,3 +451,20 @@ cron_coverage:
     # publish-waiting-feed.sh on a workstation, so the cron to watch lives in
     # wsl-automation, which is in `fleet:` above (_agent-guidance#423).
     - waiting-feed
+
+# ── The adoption kit's re-sync pull requests ───────────────────────────────
+#
+# The fleet worker may merge the kit's own re-sync pull requests after its
+# independent review (docs/routines/fleet-worker.md, step 2d, the block
+# between the `kit-only` markers; ADR 0051). The kit's repo and the GitHub
+# App that opens those pull requests are named HERE and nowhere else: the
+# spec reads both from this key, and with either missing or empty the worker
+# merges none of them and says so in its summary.
+#
+#   repo      the kit's repo name, under one of SYNC_OWNERS; it must also be
+#             listed under cron_coverage.fleet above.
+#   app_slug  the App's slug, as in https://github.com/apps/<slug>; its pull
+#             requests are authored by `<slug>[bot]`.
+kit_resync:
+  repo: acsi-kit
+  app_slug: adam-acsi-kit-resync
