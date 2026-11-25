@@ -30,6 +30,25 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-25 — 2.1.332 through 2.1.332
+
+- **Checked:** 2026-11-25T02:15Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.332](https://github.com/anthropics/claude-code/releases/tag/v2.1.332), published 2026-11-25T01:32Z
+- **Window:** v2.1.332 (published 2026-11-25T01:32Z), the first stable release after v2.1.331: 1 release, 150 bullets (the 1 in group 1 is indexed). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; the section is the top one); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** 16 of the 17 in `repos.yml` `cron_coverage.fleet` read at the head of their local checkout (`_agent-guidance` a8b1b8d, `acsi-kit` b7d3dfc, `adam-agentskills` eeeb02f, `adam-agentskills-private` 5ff1765, `adamdaniel.ai` 9d706e6, `ai-usage-dashboard` 42d25cd, `claude-memory-map` 8df34c3, `cms-platform` 76bfec9, `fastmail-actions` c115644, `jodidaniel.com` 50caef0, `repo-settings` c7a30e6, `rss-inator` 1c61886, `security-alerts` 125d3d1, `skills-evals` 4dcf6db, `verify-actions-lock` 03ef6b9, `wsl-automation` 3ef89b4), assessed with a fleet grep; none was re-fetched from the remote this run. `claude-plan-usage-estimator` is new to the list: its remote head `cce1ca1` was read with `git ls-remote`, but it has no local checkout and was not grepped, so its claims stay unassessed until the next run.
+
+#### 1. Prompt-audit sweep trigger
+
+- [v2.1.332](https://github.com/anthropics/claude-code/releases/tag/v2.1.332), published 2026-11-25T01:32Z (bullet 2.1.332/21)
+  > Fixed CLAUDE.md and rules files being sent to the model a second time, in most cases, after a session moves into a worktree under `.claude/worktrees` with EnterWorktree or is resumed there
+
+**Issues:** [_agent-guidance#639](https://github.com/Adam-S-Daniel/_agent-guidance/issues/639) (no label). The fire workflow's comment, if any, is on the issue.
+
+**Prompt-audit sweep:** requested through group 1. Bullet 2.1.332/21 changes how instruction files load in a worktree session, and the fleet guidance puts each independent coding session in a worktree under `.claude/worktrees/`. Considered and not counted: 2.1.332/0 (skills from MCP servers, an additive beta; no fleet repo configures an MCP skill), the `sonnet`/`opus` alias and default-model changes (Bedrock Mantle, Google Cloud's Agent Platform and Foundry only; the fleet uses the terminal and cloud CLI), and the reserved `computer-use` skill name (Macs with computer use on; no fleet skill has that name). No `Prompt-audit sweep trigger:` issue was open at the start of the run ([_agent-guidance#631](https://github.com/Adam-S-Daniel/_agent-guidance/issues/631) is closed).
+
+No other group met the name-the-surface bar. Considered and dropped: the new `PreSkillShellCommand` hook event (no fleet settings file names it); the `CLAUDE_CODE_OAUTH_TOKEN` prefix note for self-hosted runners (the fleet's only `oat01` mentions are a federation-token comment and fake test values in `skills-evals`, masked whole; no scrubber matches the prefix); the OpenTelemetry `service.name` and `tool_input` changes (no fleet file sets either); the hook, MCP and compaction freeze fixes (no doc claim names them); and all the `[VSCode]`, Windows-only and desktop-app bullets (the fleet uses the terminal and cloud CLI).
+
 ### 2026-11-24 — 2.1.331 through 2.1.331
 
 - **Checked:** 2026-11-24T02:20Z, [release log](https://github.com/anthropics/claude-code/releases)

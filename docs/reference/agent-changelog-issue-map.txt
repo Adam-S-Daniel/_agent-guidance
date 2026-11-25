@@ -43,3 +43,4 @@ claude-code/2026-11-18/1 Adam-S-Daniel/skills-evals#1091
 claude-code/2026-11-18/1 Adam-S-Daniel/wsl-automation#123
 claude-code/2026-11-18/2 Adam-S-Daniel/_agent-guidance#596
 claude-code/2026-11-24/1 Adam-S-Daniel/_agent-guidance#631
+claude-code/2026-11-25/1 Adam-S-Daniel/_agent-guidance#639
