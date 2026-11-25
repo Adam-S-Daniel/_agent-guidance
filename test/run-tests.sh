@@ -53,6 +53,11 @@ export AGENT_CHECKS_LOG=off
 # fictional identity of its own sees a refusal.
 export AGENT_CHECKS_LOCAL_USER=root AGENT_CHECKS_LOCAL_HOST=localhost
 
+# Nor may the privacy check read a denylist from the machine the suite runs on:
+# point it at a file that does not exist (the privacy tests set their own).
+export PRIVACY_DENYLIST_FILE="$TEST_DIR/no-privacy-denylist"
+unset PRIVACY_DENYLIST
+
 # fleet-memory.sh's hosted-session git-hooks step (ADR 0021 addendum) edits the
 # system or global git config when CLAUDE_CODE_REMOTE is set, as it is in a
 # cloud container that runs this suite. No test but test_fleet_memory_git_hooks
@@ -26803,7 +26808,7 @@ test_sync_agent_checks() {
         "agent-checks (dry run): the runner is reported"
     assert_contains "$out-dry-none" "[DRY RUN] Would add $wf" \
         "agent-checks (dry run): the workflow is reported"
-    assert_contains "$out-dry-none" "[DRY RUN] Would write .githooks/dated-phrasing.js and its allowlist and package files (dated-phrasing missing)" \
+    assert_contains "$out-dry-none" "[DRY RUN] Would write .githooks/dated-phrasing.js, its allowlist and package files, and privacy-denylist.py (dated-phrasing missing)" \
         "agent-checks (dry run): the dated-phrasing files are reported"
     assert_contains "$out-dry-none" "[DRY RUN] Would register the agent-checks guard on PreToolUse" \
         "agent-checks (dry run): the guard registration is reported"
@@ -26832,7 +26837,7 @@ test_sync_agent_checks() {
         fail "agent-checks (sync): runner, workflow and guard arrive byte for byte"
     fi
     local dated_file dated_ok=true
-    for dated_file in dated-phrasing.js dated-phrasing-allowlist.txt dated-phrasing/package.json dated-phrasing/package-lock.json; do
+    for dated_file in dated-phrasing.js dated-phrasing-allowlist.txt dated-phrasing/package.json dated-phrasing/package-lock.json privacy-denylist.py; do
         cmp -s <(ac_show ac-none ".githooks/$dated_file") "$tmpl/$dated_file" || dated_ok=false
     done
     if $dated_ok; then
@@ -27059,6 +27064,256 @@ test_agent_checks_persistent_delete() {
     fi
 }
 
+# privacy: pre-push refuses a ref name, a commit message or an author identity
+# holding this machine's names or a denylisted term, before anything is pushed,
+# and never prints the matched text, the pattern, or the ref name. Invented
+# names only (example-*); the denylist is a file in this test's own temp dir.
+test_agent_checks_privacy() {
+    echo ""
+    echo "=== Test: agent-checks pre-push privacy (ref names, messages, identities) ==="
+    local runner="$REPO_ROOT/templates/agent-checks/agent-checks"
+    local checker="$REPO_ROOT/templates/agent-checks/privacy-denylist.py"
+    local base="$TEST_DIR/ac-privacy" repo zero sha rc out err
+    zero=0000000000000000000000000000000000000000
+    rm -rf "$base"; mkdir -p "$base"
+    repo="$base/repo"
+    git init -q "$repo"
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q --allow-empty -m "add a thing"
+    sha=$(git -C "$repo" rev-parse HEAD)
+    printf '# a comment\nexample-secret-word\n\nnever-matches-(zzz)\n' > "$base/denylist.txt"
+    ac_priv_run() {   # <ref> <env...> — pre-push of <ref> at $sha, new branch; sets rc, out, err
+        local ref=$1; shift
+        rc=0
+        (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+            PRIVACY_DENYLIST_FILE="$base/no-such-file" "$@" \
+            bash "$runner" pre-push origin https://example.com/r.git \
+            <<< "refs/heads/x $sha $ref $zero") > "$base/out" 2> "$base/err" || rc=$?
+        out=$(cat "$base/out"); err=$(cat "$base/err")
+    }
+
+    # Local names: a branch name holding the hostname.
+    ac_priv_run refs/heads/fix-examplebox-thing AGENT_CHECKS_LOCAL_HOST=examplebox AGENT_CHECKS_LOCAL_USER=
+    if [[ $rc -eq 1 && "$err" == *"ref name"* && "$err" != *examplebox* ]]; then
+        pass "agent-checks privacy: a branch name holding the hostname is refused without printing it"
+    else
+        fail "agent-checks privacy: a branch name holding the hostname is refused without printing it — exit $rc: $err"
+    fi
+    ac_priv_run refs/heads/fix-ordinary-thing AGENT_CHECKS_LOCAL_HOST=examplebox AGENT_CHECKS_LOCAL_USER=
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks privacy: an ordinary branch name passes"
+    else
+        fail "agent-checks privacy: an ordinary branch name passes — exit $rc: $err"
+    fi
+    # A commit message holding the account name in a home path.
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q --allow-empty -m "see /home/exampleuser/notes"
+    local msg_sha; msg_sha=$(git -C "$repo" rev-parse HEAD)
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        PRIVACY_DENYLIST_FILE="$base/no-such-file" AGENT_CHECKS_LOCAL_USER=exampleuser AGENT_CHECKS_LOCAL_HOST= \
+        bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "refs/heads/x $msg_sha refs/heads/ok-name $zero") > "$base/out" 2> "$base/err" || rc=$?
+    err=$(cat "$base/err")
+    if [[ $rc -eq 1 && "$err" == *"${msg_sha:0:12} message"* && "$err" != *exampleuser* ]]; then
+        pass "agent-checks privacy: a commit message with the account name in a home path is refused, naming only the commit"
+    else
+        fail "agent-checks privacy: a commit message with the account name in a home path is refused — exit $rc: $err"
+    fi
+    # An author identity holding the hostname.
+    git -C "$repo" reset -q --hard "$sha"
+    git -C "$repo" -c user.name=Example -c user.email=agent@examplebox.example.net commit -q --allow-empty -m "plain message"
+    local id_sha; id_sha=$(git -C "$repo" rev-parse HEAD)
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        PRIVACY_DENYLIST_FILE="$base/no-such-file" AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST=examplebox \
+        bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "refs/heads/x $id_sha refs/heads/ok-name $zero") > "$base/out" 2> "$base/err" || rc=$?
+    err=$(cat "$base/err")
+    if [[ $rc -eq 1 && "$err" == *"${id_sha:0:12} identity"* && "$err" != *examplebox* ]]; then
+        pass "agent-checks privacy: an author identity holding the hostname is refused, naming only the commit"
+    else
+        fail "agent-checks privacy: an author identity holding the hostname is refused — exit $rc: $err"
+    fi
+
+    # The denylist file.
+    ac_priv_run refs/heads/feat-Example-Secret-Word AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST= PRIVACY_DENYLIST_FILE="$base/denylist.txt"
+    if [[ $rc -eq 1 && "$err" == *"branch name: pattern #1"* && "$err" != *ecret* && "$err" != *"Example-S"* ]]; then
+        pass "agent-checks privacy: a denylisted branch name is refused case-insensitively, by place and pattern number only"
+    else
+        fail "agent-checks privacy: a denylisted branch name is refused by place and pattern number only — exit $rc: $err"
+    fi
+    git -C "$repo" reset -q --hard "$sha"
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q --allow-empty -m "mentions example-secret-word here"
+    local dl_sha; dl_sha=$(git -C "$repo" rev-parse HEAD)
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST= PRIVACY_DENYLIST_FILE="$base/denylist.txt" \
+        bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "refs/heads/x $dl_sha refs/heads/ok-name $zero") > "$base/out" 2> "$base/err" || rc=$?
+    err=$(cat "$base/err")
+    if [[ $rc -eq 1 && "$err" == *"${dl_sha:0:12}:message:1: pattern #1"* && "$err" != *ecret* ]]; then
+        pass "agent-checks privacy: a denylisted commit message is refused by commit, line and pattern number only"
+    else
+        fail "agent-checks privacy: a denylisted commit message is refused — exit $rc: $err"
+    fi
+    # The denylist as an environment value, and an invalid pattern.
+    ac_priv_run refs/heads/ok-name AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST= PRIVACY_DENYLIST=ok-nam
+    if [[ $rc -eq 1 && "$err" != *ok-nam* ]]; then
+        pass "agent-checks privacy: PRIVACY_DENYLIST works and is never echoed"
+    else
+        fail "agent-checks privacy: PRIVACY_DENYLIST works and is never echoed — exit $rc: $err"
+    fi
+    printf 'bad-(pattern\n' > "$base/bad.txt"
+    ac_priv_run refs/heads/ok-name AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST= PRIVACY_DENYLIST_FILE="$base/bad.txt"
+    if [[ $rc -eq 1 && "$err" == *"could not be checked"* && "$err" != *bad-* ]]; then
+        pass "agent-checks privacy: an invalid denylist holds the push without echoing a pattern"
+    else
+        fail "agent-checks privacy: an invalid denylist holds the push without echoing a pattern — exit $rc: $err"
+    fi
+
+    # No denylist file: nothing denylisted is checked, and the push passes.
+    ac_priv_run refs/heads/feat-example-secret-word AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST= HOME="$base/empty-home"
+    if [[ $rc -eq 0 && -z "$err" ]]; then
+        pass "agent-checks privacy: with no denylist file the push passes silently"
+    else
+        fail "agent-checks privacy: with no denylist file the push passes silently — exit $rc: $err"
+    fi
+    # The default file under HOME is read.
+    mkdir -p "$base/home/.config"; cp "$base/denylist.txt" "$base/home/.config/privacy-denylist.txt"
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS -u PRIVACY_DENYLIST_FILE GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST= HOME="$base/home" \
+        bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "refs/heads/x $sha refs/heads/example-secret-word $zero") > "$base/out" 2> "$base/err" || rc=$?
+    if [[ $rc -eq 1 ]]; then
+        pass "agent-checks privacy: ~/.config/privacy-denylist.txt is read when nothing names a file"
+    else
+        fail "agent-checks privacy: ~/.config/privacy-denylist.txt is read when nothing names a file — exit $rc"
+    fi
+
+    # No python3: warn, and still check the local names.
+    local nopy="$base/nopy-bin" tool
+    mkdir -p "$nopy"
+    for tool in bash git grep sed tr cat head tail date mkdir dirname sha256sum env id hostname uname mktemp rm sort wc cut awk basename; do
+        [[ -x "$(command -v "$tool")" ]] && ln -sf "$(command -v "$tool")" "$nopy/$tool"
+    done
+    ac_priv_run refs/heads/feat-example-secret-word PATH="$nopy" AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST= PRIVACY_DENYLIST_FILE="$base/denylist.txt"
+    if [[ $rc -eq 0 && "$err" == *"python3"* && "$err" != *ecret* ]]; then
+        pass "agent-checks privacy: without python3 the denylist is skipped with a warning"
+    else
+        fail "agent-checks privacy: without python3 the denylist is skipped with a warning — exit $rc: $err"
+    fi
+    ac_priv_run refs/heads/fix-examplebox-thing PATH="$nopy" AGENT_CHECKS_LOCAL_HOST=examplebox AGENT_CHECKS_LOCAL_USER= PRIVACY_DENYLIST_FILE="$base/denylist.txt"
+    if [[ $rc -eq 1 && "$err" == *"ref name"* && "$err" != *examplebox* ]]; then
+        pass "agent-checks privacy: without python3 the local names are still checked"
+    else
+        fail "agent-checks privacy: without python3 the local names are still checked — exit $rc: $err"
+    fi
+
+    # The run log gets the id and nothing sensitive.
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG="$base/runs.jsonl" \
+        AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST=examplebox PRIVACY_DENYLIST_FILE="$base/no-such-file" \
+        bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "refs/heads/x $sha refs/heads/fix-examplebox-thing $zero") > /dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 1 ]] && grep -qF '"privacy"' "$base/runs.jsonl" && ! grep -qiF examplebox "$base/runs.jsonl"; then
+        pass "agent-checks privacy: the run log records the id, ran and failed, and no name"
+    else
+        fail "agent-checks privacy: the run log records the id, ran and failed, and no name — exit $rc"
+    fi
+
+    # Regressions from the independent review of PR #638.
+    # A hostname that is part of an ordinary word, or of the author's name, is
+    # not a hit: only a whole word is.
+    ac_priv_run refs/heads/ci-rebuilds AGENT_CHECKS_LOCAL_HOST=build AGENT_CHECKS_LOCAL_USER=
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks privacy: a hostname inside a longer word in a branch name is not a hit"
+    else
+        fail "agent-checks privacy: a hostname inside a longer word in a branch name is not a hit — exit $rc: $err"
+    fi
+    git -C "$repo" reset -q --hard "$sha"
+    git -C "$repo" -c user.name="Examplehost Person" -c user.email=agent@example.com commit -q --allow-empty -m "Rebuild the cache"
+    local word_sha; word_sha=$(git -C "$repo" rev-parse HEAD)
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        PRIVACY_DENYLIST_FILE="$base/no-such-file" AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST=build \
+        bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "refs/heads/x $word_sha refs/heads/ok-name $zero") > "$base/out" 2> "$base/err" || rc=$?
+    err=$(cat "$base/err")
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks privacy: a hostname inside a word of a message is not a hit"
+    else
+        fail "agent-checks privacy: a hostname inside a word of a message is not a hit — exit $rc: $err"
+    fi
+    # Commits the remote already has (main merged into a branch) are not
+    # checked: no one can reword them.
+    local pub="$base/pub.git" pub_sha feat_sha
+    git init -q --bare "$pub"
+    git -C "$repo" reset -q --hard "$sha"
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q --allow-empty -m "Merge pull request #5 from owner/fix-examplebox-thing"
+    pub_sha=$(git -C "$repo" rev-parse HEAD)
+    git -C "$repo" push -q --no-verify "$pub" "$pub_sha:refs/heads/main"
+    git -C "$repo" fetch -q "$pub" "+refs/heads/main:refs/remotes/origin/main"
+    git -C "$repo" checkout -q -b feat "$sha"
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q --allow-empty -m "feature work"
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com merge -q --no-edit origin/main
+    feat_sha=$(git -C "$repo" rev-parse HEAD)
+    git -C "$repo" checkout -q --detach
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        PRIVACY_DENYLIST_FILE="$base/no-such-file" AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST=examplebox \
+        bash "$runner" pre-push origin https://example.com/r.git \
+        <<< "refs/heads/feat $feat_sha refs/heads/feat $sha") > "$base/out" 2> "$base/err" || rc=$?
+    err=$(cat "$base/err")
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks privacy: a commit the remote already has is not checked"
+    else
+        fail "agent-checks privacy: a commit the remote already has is not checked — exit $rc: $err"
+    fi
+    # A stock hostname that is an ordinary word is not checked at all.
+    ac_priv_run refs/heads/move-to-ubuntu-latest AGENT_CHECKS_LOCAL_HOST=ubuntu AGENT_CHECKS_LOCAL_USER=
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks privacy: a generic hostname (ubuntu) is not a hit"
+    else
+        fail "agent-checks privacy: a generic hostname (ubuntu) is not a hit — exit $rc: $err"
+    fi
+    # A new branch pushed to a remote with no tracking refs (a fresh fork)
+    # skips commits another remote already has.
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        PRIVACY_DENYLIST_FILE="$base/no-such-file" AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST=examplebox \
+        bash "$runner" pre-push fork https://example.com/fork.git \
+        <<< "refs/heads/feat $feat_sha refs/heads/feat2 $zero") > "$base/out" 2> "$base/err" || rc=$?
+    err=$(cat "$base/err")
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks privacy: a push to a fresh remote skips commits another remote has"
+    else
+        fail "agent-checks privacy: a push to a fresh remote skips commits another remote has — exit $rc: $err"
+    fi
+    # A checker crash (here an overflowing repeat count) holds the push as
+    # "could not be checked", never as a denylist hit.
+    printf 'a{99999999999}\n' > "$base/crash.txt"
+    ac_priv_run refs/heads/ok-name AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST= PRIVACY_DENYLIST_FILE="$base/crash.txt"
+    if [[ $rc -eq 1 && "$err" == *"could not be checked"* && "$err" != *"denylisted term"* ]]; then
+        pass "agent-checks privacy: a checker crash reads as could-not-check, not as a match"
+    else
+        fail "agent-checks privacy: a checker crash reads as could-not-check, not as a match — exit $rc: $err"
+    fi
+
+    # The checker's own interface (reused by a CI-mode check): exit codes and output.
+    rc=0; out=$(env -u PRIVACY_DENYLIST HOME="$base/empty-home" python3 "$checker" --repo "$repo" --ref refs/heads/x 2>&1) || rc=$?
+    [[ $rc -eq 3 && -z "$out" ]] && pass "privacy-denylist.py: no denylist exits 3 and prints nothing" \
+        || fail "privacy-denylist.py: no denylist exits 3 and prints nothing — exit $rc: $out"
+    rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$repo" --denylist-file "$base/denylist.txt" --ref refs/heads/clean 2>&1) || rc=$?
+    [[ $rc -eq 0 && "$out" == OK* ]] && pass "privacy-denylist.py: a clean ref exits 0" \
+        || fail "privacy-denylist.py: a clean ref exits 0 — exit $rc: $out"
+    rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$repo" --denylist-file "$base/denylist.txt" --commits-stdin <<< "$dl_sha" 2>&1) || rc=$?
+    [[ $rc -eq 1 && "$out" == *"message:1: pattern #1"* && "$out" != *ecret* ]] && pass "privacy-denylist.py: a denylisted commit message exits 1 and prints no text" \
+        || fail "privacy-denylist.py: a denylisted commit message exits 1 and prints no text — exit $rc: $out"
+    rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$repo" --denylist-file "$base/denylist.txt" --commits-stdin <<< "not-a-sha" 2>&1) || rc=$?
+    [[ $rc -eq 2 ]] && pass "privacy-denylist.py: a bad commit id exits 2" \
+        || fail "privacy-denylist.py: a bad commit id exits 2 — exit $rc: $out"
+}
+
 # pre-push refuses a push to the lock bumper's branch, because a commit the
 # bumper did not make strands its pull request; deleting that branch, which is
 # the way to free it, and pushing to any other branch still pass.
@@ -27101,7 +27356,7 @@ test_agent_checks_bump_branch_push() {
 ac_size_run() {   # <repo> <out prefix> <runner args...> — runs the runner, prints its exit code
     local repo=$1 out=$2 rc=0
     shift 2
-    (cd "$repo" && GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
         AGENT_CHECKS_DATED_PHRASING_MODULES="$TEST_DIR/ac-size-no-modules" \
         bash "$REPO_ROOT/templates/agent-checks/agent-checks" "$@") \
         > "$out.out" 2> "$out.err" < /dev/null || rc=$?
@@ -29017,6 +29272,7 @@ GROUP_automerge=(
 GROUP_agent_checks=(
     test_agent_checks_guard
     test_agent_checks_persistent_delete
+    test_agent_checks_privacy
     test_agent_checks_bump_branch_push
     test_agent_checks_agents_md_size
     test_agent_checks_ci_annotation

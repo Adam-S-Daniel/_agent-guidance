@@ -108,12 +108,14 @@ AC_RUNNER_REL_PATH=".githooks/agent-checks"
 AC_WF_REL_PATH=".github/workflows/agent-checks.yml"
 AC_GUARD_REL_PATH=".claude/hooks/agent-checks-guard.sh"
 AC_GUARD_MATCHER="Bash|Edit|Write|MultiEdit|NotebookEdit"
-# The runner's dated-phrasing warning pass: its script, the fleet allowlist,
-# and the package files that pin its one dependency. MANAGED like the runner,
+# The runner's sidecar files: the dated-phrasing warning pass (its script, the
+# fleet allowlist, and the package files that pin its one dependency) and the
+# privacy check's Python denylist matcher. MANAGED like the runner,
 # delivered at the same relative path under .githooks/ as under the template
 # directory, so the runner finds them beside itself in both places.
 AC_DATED_FILES=(dated-phrasing.js dated-phrasing-allowlist.txt
-                dated-phrasing/package.json dated-phrasing/package-lock.json)
+                dated-phrasing/package.json dated-phrasing/package-lock.json
+                privacy-denylist.py)
 # The runner is run by bash from git hooks, so a CRLF checkout breaks it the
 # same way it breaks the .claude/hooks scripts (ADR 0019): a second managed line.
 AC_EOL_LINE='.githooks/* text eol=lf'
@@ -1732,7 +1734,7 @@ for repo_name in "${REPOS[@]}"; do
             [[ "$ac_runner_state" == "missing" || "$ac_runner_state" == "drifted" ]] \
                 && log "[DRY RUN] Would write $AC_RUNNER_REL_PATH (runner $ac_runner_state) $delivery_note"
             [[ "$ac_dated_state" == "missing" || "$ac_dated_state" == "drifted" ]] \
-                && log "[DRY RUN] Would write .githooks/dated-phrasing.js and its allowlist and package files (dated-phrasing $ac_dated_state) $delivery_note"
+                && log "[DRY RUN] Would write .githooks/dated-phrasing.js, its allowlist and package files, and privacy-denylist.py (dated-phrasing $ac_dated_state) $delivery_note"
             [[ "$ac_wf_state" == "missing" ]] \
                 && log "[DRY RUN] Would add $AC_WF_REL_PATH (the agent-checks CI check) $delivery_note"
             [[ "$ac_trigger_state" == "missing-edited" ]] \
