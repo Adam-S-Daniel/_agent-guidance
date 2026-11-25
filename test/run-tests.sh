@@ -27269,6 +27269,26 @@ test_agent_checks_privacy() {
     else
         fail "agent-checks privacy: a commit the remote already has is not checked — exit $rc: $err"
     fi
+    # A stock hostname that is an ordinary word is not checked at all.
+    ac_priv_run refs/heads/move-to-ubuntu-latest AGENT_CHECKS_LOCAL_HOST=ubuntu AGENT_CHECKS_LOCAL_USER=
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks privacy: a generic hostname (ubuntu) is not a hit"
+    else
+        fail "agent-checks privacy: a generic hostname (ubuntu) is not a hit — exit $rc: $err"
+    fi
+    # A new branch pushed to a remote with no tracking refs (a fresh fork)
+    # skips commits another remote already has.
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+        PRIVACY_DENYLIST_FILE="$base/no-such-file" AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST=examplebox \
+        bash "$runner" pre-push fork https://example.com/fork.git \
+        <<< "refs/heads/feat $feat_sha refs/heads/feat2 $zero") > "$base/out" 2> "$base/err" || rc=$?
+    err=$(cat "$base/err")
+    if [[ $rc -eq 0 ]]; then
+        pass "agent-checks privacy: a push to a fresh remote skips commits another remote has"
+    else
+        fail "agent-checks privacy: a push to a fresh remote skips commits another remote has — exit $rc: $err"
+    fi
     # A checker crash (here an overflowing repeat count) holds the push as
     # "could not be checked", never as a denylist hit.
     printf 'a{99999999999}\n' > "$base/crash.txt"

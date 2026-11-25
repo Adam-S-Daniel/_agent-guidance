@@ -204,7 +204,7 @@ def main(
 
     if found:
         print(f"FAILED: {len(found)} denylisted match(es). Matched text is not shown; "
-              "the pattern number is the line of the denylist that fired.")
+              "the pattern number counts the denylist's patterns from 1, skipping comment and blank lines.")
         for where, index in found:
             print(f"  {where}: pattern #{index}")
         return EXIT_MATCH
