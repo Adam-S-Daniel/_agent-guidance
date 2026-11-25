@@ -25888,7 +25888,8 @@ test_self_hosted_gitattributes() {
 # AGENT_NAME is pinned empty so the block message's footer is the Claude Code
 # one whatever the invoking shell exports. The privacy denylist and the
 # machine identity are pinned too (GWM_DENYLIST, GWM_USER, GWM_HOST; none by
-# default), so no leg depends on the machine the suite runs on. See
+# default), and GITHUB_ACTIONS is unset (under it the identity check is off),
+# so no leg depends on the machine or CI the suite runs on. See
 # docs/decisions/0023.
 test_github_write_marker_hook() {
     echo ""
@@ -25908,7 +25909,7 @@ test_github_write_marker_hook() {
     gwm() {
         local want="$1" label="$2" event="$3" rc=0
         n=$((n + 1))
-        printf '%s' "$event" | env AGENT_NAME= \
+        printf '%s' "$event" | env -u GITHUB_ACTIONS AGENT_NAME= \
             PRIVACY_DENYLIST_FILE="${GWM_DENYLIST:-$d/no-denylist.txt}" \
             AGENT_CHECKS_LOCAL_USER="${GWM_USER:-}" \
             AGENT_CHECKS_LOCAL_HOST="${GWM_HOST:-}" \
@@ -26154,6 +26155,17 @@ print(json.dumps(ev))' "$command" "$cwd")"
         "gh issue comment 5 --body \"zebrafinch $mark\""
     gwmc 2 "no denylist file: the hostname is still checked" \
         "gh issue comment 5 --body \"from examplebox $mark\""
+    local rc_ci=0
+    python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' \
+        "gh issue comment 5 --body \"from examplebox $mark\"" \
+        | env GITHUB_ACTIONS=true PRIVACY_DENYLIST_FILE="$d/no-denylist.txt" \
+            AGENT_CHECKS_LOCAL_USER=exampleuser AGENT_CHECKS_LOCAL_HOST=examplebox \
+            bash "$GWM_HOOK" > /dev/null 2>&1 || rc_ci=$?
+    if [[ "$rc_ci" == 0 ]]; then
+        pass "github-write-marker: under GITHUB_ACTIONS=true the identity names are not checked"
+    else
+        fail "github-write-marker: under GITHUB_ACTIONS=true the identity names are not checked — rc $rc_ci"
+    fi
     GWM_USER=root GWM_HOST=vm
     gwmc 0 "generic identity names are not checked" \
         "gh issue comment 5 --body \"/home/root/vm $mark\""
