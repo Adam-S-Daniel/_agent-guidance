@@ -76,11 +76,19 @@ blocked comments. The on-hold stop overrides step 7 below.
    `gh search issues --label agent-ready --state open --owner Adam-S-Daniel --owner jodidaniel`,
    keep only issues in fleet repos (above), exclude `on-hold` issues and
    issues with a held linked PR before the 3-item limit, sort oldest first,
-   and take at most 3 this run, one at a time. If there are none, say so
+   then run
+   `node scripts/live-work.js <owner>/<repo>#<n> ...` (from the
+   `_agent-guidance` checkout) on the candidates and drop every `live` one,
+   naming it in the summary as `live: <reason>` (an open PR references it,
+   or it changed in the last 60 minutes: a project thread may be working it
+   without `agent-working`). If the script exits 1, take no issue this run and
+   say so (fail closed). Then apply the 3-item limit: take at most 3 this run,
+   one at a time. If there are none, say so
    and end this pass (in the fleet worker, the lesson-check pass still
    runs).
 2. **Claim it.** Re-read issue and linked PR labels before any mutation;
-   skip if either carries `on-hold`. Skip an issue that already carries
+   skip if either carries `on-hold`. Run `scripts/live-work.js` on this one
+   issue right before claiming it and skip it if it is `live`. Skip an issue that already carries
    `agent-working` or `agent-blocked`. Otherwise remove `agent-ready`,
    add `agent-working`, and
    comment `Picked up by the fleet worker at <UTC time>.` Then re-read
@@ -166,6 +174,14 @@ blocked comments. The on-hold stop overrides step 7 below.
    the dialog that enforces it is the owner's setting.
 8. **Finish with a summary:** the issues taken, the PR links, the blocked
    issues with why, and each issue moved to `needs-thread` with its link. If there were no candidates, say so and end.
+
+**Any other session working an `agent-ready` issue claims it first.** A
+project thread, or any session the owner points at an issue, swaps
+`agent-ready` for `agent-working` before it starts, the same claim as step 2,
+so this worker's step 2 skips it at once. `scripts/live-work.js` only sees a
+thread once it comments or opens a PR, which can be an hour in. The thread
+removes the claim when it stops without a PR; with one, step 6 and "Stale
+claims" handle it as for this worker's own claims.
 
 ## Skill removal issues
 

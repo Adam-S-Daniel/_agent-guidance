@@ -773,6 +773,10 @@ labeled `on-hold` (reported as `on hold`), and the `Memory promotion
 up to the 3-issue limit. A candidate step 2 of "Each run" skips (it still
 carries `agent-working` or `agent-blocked` beside `agent-ready`, or has a held
 linked PR) is named with its reason in the summary, and the next one is taken.
+Candidates with live work (an open PR references them, or they changed in the
+last 60 minutes) are dropped through `scripts/live-work.js`, as step 1 of "Each
+run" says: project threads work issues without the `agent-working` label
+(adam-agentskills#198, 2026-11-25).
 
 Before fixing a sweep or memory-promotion issue, run
 `node scripts/eval-protected.js list` on a fresh `explorer/latest.json`
@@ -797,7 +801,8 @@ ambiguity or a choice between fixes as its reason, and that has no earlier
 labeling it `needs-owner`, swap `agent-blocked` for `agent-ready` and comment
 that the worker decides such choices, with that marker. An issue requeued
 once that blocks again goes to the owner as below, so no issue bounces
-between the two labels. Nothing else reports it: the PR pass's list covers
+between the two labels. The swap skips an issue `scripts/live-work.js` reports
+`live`. Nothing else reports it: the PR pass's list covers
 PRs only, so a health-audit `ci` issue that is not the repo's to fix would
 otherwise stay blocked with no one told.
 

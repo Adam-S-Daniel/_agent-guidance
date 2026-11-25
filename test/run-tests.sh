@@ -20994,6 +20994,26 @@ test_stale_claims() {
     fi
 }
 
+test_live_work() {
+    echo ""
+    echo "=== Test: live-work.js (node:test suite) ==="
+
+    local out="$TEST_DIR/live-work-tap.txt" rc=0
+    # NEVER pipe this: a pipe's exit status belongs to its last command.
+    node --test --test-reporter=tap "$REPO_ROOT/test/test-live-work.js" > "$out" 2>&1 || rc=$?
+
+    local pass_n fail_n
+    pass_n=$(grep -oE '^# pass [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+    fail_n=$(grep -oE '^# fail [0-9]+' "$out" | tail -1 | grep -oE '[0-9]+' || true)
+
+    # 12 is the suite's count, so a deleted test fails here.
+    if [[ "$rc" -eq 0 && "$fail_n" == "0" && -n "$pass_n" && "$pass_n" -ge 12 ]]; then
+        pass "live work: node:test suite is green ($pass_n passed)"
+    else
+        fail "live work: node:test suite — exit $rc, pass=${pass_n:-?}, fail=${fail_n:-?} (need rc=0, fail=0, pass>=12): $(tail -20 "$out" | tr '\n' ' ')"
+    fi
+}
+
 test_base_md_merge_window() {
     echo ""
     echo "=== Test: base-md-merge-window.js (node:test suite) ==="
@@ -28956,6 +28976,7 @@ GROUP_self_hosted=(
     test_routine_merge_gate
     test_base_md_merge_window
     test_stale_claims
+    test_live_work
     test_guidance_overlap
     test_language_fit
     test_eval_protected
