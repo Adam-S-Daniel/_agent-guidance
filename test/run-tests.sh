@@ -26158,6 +26158,24 @@ print(json.dumps(ev))' "$command" "$cwd")"
     gwmc 0 "generic identity names are not checked" \
         "gh issue comment 5 --body \"/home/root/vm $mark\""
 
+    # ── Codex runs the same script as a plugin hook ──
+    GWM_USER= GWM_HOST= GWM_DENYLIST="$d/denylist.txt"
+    gwm 2 "a Codex shell event with the command as a list of words" \
+        '{"tool_name":"Bash","tool_input":{"command":["gh","issue","comment","5","--body","zebrafinch"]}}'
+    gwm 2 "a Codex exec_command event" \
+        '{"tool_name":"exec_command","tool_input":{"cmd":"gh pr comment 1 --body hi"}}'
+    local codex_mark='<sub>🤖 Written by Codex on behalf of @Adam-S-Daniel</sub>'
+    local rc=0
+    printf '%s' '{"tool_name":"Bash","transcript_path":"/home/example/.codex/sessions/s.jsonl","tool_input":{"command":"gh pr comment 1 --body hi"}}' \
+        | env -u AGENT_NAME PRIVACY_DENYLIST_FILE="$d/no-denylist.txt" \
+            AGENT_CHECKS_LOCAL_USER= AGENT_CHECKS_LOCAL_HOST= \
+            bash "$GWM_HOOK" > /dev/null 2> "$d/err-codex" || rc=$?
+    if [[ "$rc" == 2 ]] && grep -qF -- "$codex_mark" "$d/err-codex"; then
+        pass "github-write-marker: a Codex transcript_path gets the Codex footer"
+    else
+        fail "github-write-marker: a Codex transcript_path gets the Codex footer — rc $rc"
+    fi
+
     unset -f gwm gwmc gwm_quiet
 }
 

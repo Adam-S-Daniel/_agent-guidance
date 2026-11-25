@@ -112,7 +112,17 @@
 # stderr warning: a broken hook must not wedge every tool call.
 #
 # The footer names the agent from `AGENT_NAME`: `codex` gives `Codex`, any
-# other value or none gives `Claude Code`.
+# other value gives `Claude Code`. With `AGENT_NAME` unset, a Codex run is
+# told apart the way adam-agentskills' `hooks/lib/harness.sh` does it: a
+# `transcript_path` under `/.codex/`, or `PLUGIN_ROOT` set without
+# `CLAUDE_PROJECT_DIR`.
+#
+# CODEX loads the same script as a plugin hook (adam-agentskills#198). Its
+# PreToolUse event names its shell tool `Bash` and puts the command in
+# `tool_input.command`, and exit 2 with stderr blocks the call, as in Claude
+# Code. In case a Codex version reports the shell differently, the shell
+# names `exec_command`, `shell` and `local_shell` are read as `Bash` too, and
+# a command given as a list of words is joined back into one line.
 set -uo pipefail
 
 # Read stdin ONCE.
@@ -708,6 +718,13 @@ except Exception as exc:
                      "object (%s); allowing the call unchecked.\n" % exc.__class__.__name__)
     allow()
 
+agent_env = os.environ.get("AGENT_NAME")
+transcript = event.get("transcript_path")
+if agent_env is None and (
+        (isinstance(transcript, str) and "/.codex/" in transcript.replace("\\", "/"))
+        or (os.environ.get("PLUGIN_ROOT") and not os.environ.get("CLAUDE_PROJECT_DIR"))):
+    FOOTER = "<sub>🤖 Written by Codex on behalf of @Adam-S-Daniel</sub>"
+
 tool = event.get("tool_name")
 tool_input = event.get("tool_input")
 if not isinstance(tool, str) or not isinstance(tool_input, dict):
@@ -741,11 +758,13 @@ if m:
         block("this %s" % m.group(1))
     allow()
 
-if tool != "Bash":
+if tool not in ("Bash", "exec_command", "shell", "local_shell"):
     allow()
 
 # ── Bash ───────────────────────────────────────────────────────────────────
-cmd = tool_input.get("command")
+cmd = tool_input.get("command", tool_input.get("cmd"))
+if isinstance(cmd, list) and all(isinstance(w, str) for w in cmd):
+    cmd = shlex.join(cmd)
 if not isinstance(cmd, str):
     allow()
 
