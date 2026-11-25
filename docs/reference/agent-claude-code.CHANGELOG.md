@@ -30,6 +30,65 @@ window ([process](agent-discrepancy-process.md), last section).
 
 ## Entries
 
+### 2026-11-24 — 2.1.331 through 2.1.331
+
+- **Checked:** 2026-11-24T02:20Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.331](https://github.com/anthropics/claude-code/releases/tag/v2.1.331), published 2026-11-23T21:34Z
+- **Window:** v2.1.331 (published 2026-11-23T21:34Z), the first stable release after v2.1.330: 1 release, 135 bullets (the 1 in group 1 is indexed). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; the section is the top one); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 16 in `repos.yml` `cron_coverage.fleet`, each read at the head of its local checkout (`_agent-guidance` 265e16f, `acsi-kit` b7d3dfc, `adam-agentskills` eeeb02f, `adam-agentskills-private` 5ff1765, `adamdaniel.ai` a7457fa, `ai-usage-dashboard` 42d25cd, `claude-memory-map` 8df34c3, `cms-platform` de728f4, `fastmail-actions` c115644, `jodidaniel.com` c77cd16, `repo-settings` c7a30e6, `rss-inator` 1c61886, `security-alerts` 125d3d1, `skills-evals` 4dcf6db, `verify-actions-lock` 03ef6b9, `wsl-automation` 3ef89b4), and assessed with a fleet grep; none was re-fetched from the remote this run.
+
+#### 1. Prompt-audit sweep trigger
+
+- [v2.1.331](https://github.com/anthropics/claude-code/releases/tag/v2.1.331), published 2026-11-23T21:34Z (bullet 2.1.331/23)
+  > Fixed an interrupted or failed plugin update leaving a partial plugin folder that later loaded with skills or other components missing (anthropics/claude-code#102186)
+
+**Issues:** [_agent-guidance#631](https://github.com/Adam-S-Daniel/_agent-guidance/issues/631) (no label). The fire workflow's comment, if any, is on the issue.
+
+**Prompt-audit sweep:** requested through group 1. Bullet 2.1.331/23 changes what loads on a surface the fleet uses (plugins), as the 2.1.326/325 fix did. Considered and not counted: 2.1.331/7 (`optionalDependencies` in plugin manifests, an additive field no fleet manifest sets), 2.1.331/2 (`claude doctor` gains an API connectivity section, which does not change its instruction-file checks) and 2.1.331/55 (managed `extraKnownMarketplaces` will auto-update by default from November 30, 2026; `adam-agentskills`' `setup.sh` writes the key to user settings, not managed settings). No `Prompt-audit sweep trigger:` issue was open at the start of the run ([_agent-guidance#596](https://github.com/Adam-S-Daniel/_agent-guidance/issues/596) is closed).
+
+No other group met the name-the-surface bar. Considered and dropped: the Code Mode additions and fixes and the `gen_ai.*` trace span fields (no fleet file uses them); the PushNotification headless-run fix (only a stored 2.1.231 fixture in `skills-evals` names the tool); `PermissionDenied` hook `retry` wording and `PermissionRequest` `Skill(name:*)` saving (no fleet hook uses either); the Workflow agent shell cleanup; and all the `[VSCode]` and Windows-only bullets (the fleet uses the terminal and cloud CLI).
+
+### 2026-11-21 — 2.1.330 through 2.1.330
+
+- **Checked:** 2026-11-21T02:10Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.330](https://github.com/anthropics/claude-code/releases/tag/v2.1.330), published 2026-11-20T22:32Z
+- **Window:** v2.1.330 (published 2026-11-20T22:32Z), the first stable release after v2.1.329: 1 release, 142 bullets, none indexed (no group). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.330` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 18 checkouts under the session's home directory were read at their local heads (`_agent-guidance` 4a62a5d, `acsi-kit` 1e2cab5, `adam-agentskills` e3ff82a, `adam-agentskills-private` fefac11, `adamdaniel.ai` f8183a6, `ai-usage-dashboard` 7ecc977, `claude-memory-map` d5df08d, `cms-platform` ac60a53, `fastmail-actions` 0c4de45, `jodidaniel.com` 9aba856, `repo-settings` 67b9d10, `rss-inator` 59d75b4, `security-alerts` 5e07282, `skills-evals` 3418eda, `verify-actions-lock` edf92cb, `wsl-automation` f91e279; the two vendor repos `claude-code` and `codex` are also checked out and not assessed). `repos.yml` `cron_coverage.fleet` was not re-read this run.
+
+No group met the name-the-surface bar. A grep of the fleet for `--continue`, `deniedMcpServers`, `opusplan`, `forceLoginOrgUUID`, `claude plugin install`, `ExitWorktree`, `bashEditDiffEnabled`, `SELF_HOSTED_RUNNER` and `CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT` found only the `skills-bootstrap` hooks' `claude plugin install` calls, which 2.1.330 extends with extra `--json` fields and a concurrency fix without changing what they call, and vendor example files. Nothing in the fleet depends on a changed behavior.
+
+**Prompt-audit sweep:** not requested, because one is already open. One bullet changes what loads: "Fixed link reference definitions being dropped from CLAUDE.md and memory files that contain an HTML comment" (bullet 2.1.330/52). A trigger issue, [_agent-guidance#596](https://github.com/Adam-S-Daniel/_agent-guidance/issues/596), is still open, so by step 4a nothing is filed and the sweep is not fired. This run edits no issue it did not create.
+
+**Issues:** none.
+
+### 2026-11-20 — 2.1.329 through 2.1.329
+
+- **Checked:** 2026-11-20T02:10Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.329](https://github.com/anthropics/claude-code/releases/tag/v2.1.329), published 2026-11-19T22:14Z
+- **Window:** v2.1.329 (published 2026-11-19T22:14Z), the first stable release after v2.1.328: 1 release, 130 bullets, none indexed (no group). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.329` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 16 in `repos.yml` `cron_coverage.fleet`, each read at the head of its local checkout (`_agent-guidance` 9a27ea9, `acsi-kit` d7bfd93, `adam-agentskills` dadc729, `adam-agentskills-private` 0b5f605, `adamdaniel.ai` faf8f91, `ai-usage-dashboard` e775dcc, `claude-memory-map` e900083, `cms-platform` d5541bb, `fastmail-actions` 18c7705, `jodidaniel.com` e81aa63, `repo-settings` b2b6ec9, `rss-inator` 019626e, `security-alerts` 26e008a, `skills-evals` ef9b2ac, `verify-actions-lock` 9fb13df, `wsl-automation` b3adb1e).
+
+No group met the name-the-surface bar. A grep of the fleet for `background_tasks`, `Code Mode`, `/code-review`, `Plugin directory does not exist`, `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, `--add-dir` and saved scheduled tasks found no file that depends on a changed behavior: no fleet hook reads `background_tasks`; no fleet file sets `CLAUDE_CODE_MAX_OUTPUT_TOKENS` (the removed `max_tokens` retry is for gateways); the `/code-review` changes touch only a skill the fleet names as a reviewer role; the scheduled-task change is for tasks saved in a session, not the claude.ai routines the fleet uses; and the `claude.ai`-synced plugin hook fix is for macOS, which no fleet machine runs. The `keeper` resume path in `wsl-automation` (`claude --bg --resume`) is not changed by the background-agent resume fix, which is about a stop racing a resume.
+
+**Prompt-audit sweep:** not requested, because one is already open. Two bullets change what loads: "Fixed a new skills, commands or agents folder being missed when `--add-dir` names the working directory or Claude Code starts in the home folder" (bullet 2.1.329/39; bullet 2.1.329/90, "Improved cloud sessions to retry plugins that failed to download at startup", also changes what loads). A trigger issue, [_agent-guidance#596](https://github.com/Adam-S-Daniel/_agent-guidance/issues/596), is still open, so by step 4a nothing is filed and the sweep is not fired; the owner or the sweep can fold the new bullet into that issue's check. This run edits no issue it did not create.
+
+**Issues:** none.
+
+### 2026-11-19 — 2.1.328 through 2.1.328
+
+- **Checked:** 2026-11-19T02:20Z, [release log](https://github.com/anthropics/claude-code/releases)
+- **Latest version in the change log:** [v2.1.328](https://github.com/anthropics/claude-code/releases/tag/v2.1.328), published 2026-11-19T01:14Z
+- **Window:** v2.1.328 (published 2026-11-19T01:14Z), the first stable release after v2.1.327: 1 release, 190 bullets, none indexed (no group). The publish time is the `datetime` attribute on the tag page, in UTC.
+- **Source text:** the matching `CHANGELOG.md` section in `anthropics/claude-code` (shallow clone; tag `v2.1.328` listed by `git ls-remote --tags`); the tag page was fetched (HTTP 200) for its publish time.
+- **Repos considered:** all 16 in `repos.yml` `cron_coverage.fleet`, each read at the head of its local checkout (`_agent-guidance 239eaef, `acsi-kit` b954d54, `adam-agentskills` 72e900f, `adam-agentskills-private` 109ce02, `adamdaniel.ai` 1c075d9, `ai-usage-dashboard` f4a1f7a, `claude-memory-map` 0f9a642, `cms-platform` e35791b, `fastmail-actions` 7c121ba, `jodidaniel.com` f0597b0, `repo-settings` 0af9a50, `rss-inator` d2a555e, `security-alerts` e2a410c, `skills-evals` 2e5a515, `verify-actions-lock` 02bd2ce, `wsl-automation` e8f5494`).
+
+No group met the name-the-surface bar. A grep of the fleet for `/code-review`, `onFailure`, `mcp_tool`, `deniedMcpServers`, `PermissionRequest`, `PostToolUse`, `CLAUDE_CODE_FORK_SUBAGENT`, `CLAUDE_STREAM_IDLE_TIMEOUT`, `OTEL_` and `--permission-mode` found no dependence on a changed behavior: the `PostToolUse` hooks are plugin hooks, and the change is to managed ones; the `--permission-mode auto` calls (`wsl-automation` memory curation, `skills-evals` harness) run on the Anthropic API, while the auto-mode additions and fixes are for third-party providers; `skills-evals/HANDOFF.md` only names `/code-review` as a reviewer role, and the report format change (bugs and CLAUDE.md violations only, findings marked Important, Pre-existing or Nit) contradicts nothing it says. The new `/status` and `claude doctor` OpenTelemetry notice adds a warning and does not change `/doctor`'s checks of instruction files, so the prompt-audit sweep was not triggered (no bullet adds a model, changes the default model or an alias, or changes how instruction files, skills or memory load on a surface the fleet uses; the skill and hook-context fix is for Code Mode).
+
+**Issues:** none.
+
 ### 2026-11-18 — 2.1.327 through 2.1.327
 
 - **Checked:** 2026-11-18T02:20Z, [release log](https://github.com/anthropics/claude-code/releases)
