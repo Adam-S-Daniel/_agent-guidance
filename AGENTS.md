@@ -65,10 +65,10 @@ The owner's sessions install it from the owner's own routes (the plugin's
 SessionStart hook and the cloud environments' setup script). Consumer repos,
 this one included, carry only the stub and `.github/fleet-contributor-rules.md`,
 which `scripts/build-contributor-rules.js` builds from `base.md` and CI
-regenerates and diffs. `scripts/sync.sh` removes a leftover
-`.claude/hooks/fleet-guidance.md`, `fleet-memory.sh` or `guidance-load-record.sh`
-from a consumer, along with exactly the `settings.json` entries it once wrote
-for them. This repo keeps `fleet-memory.sh` and `guidance-load-record.sh`
+regenerates and diffs. `scripts/sync.sh` keeps a consumer free of
+`.claude/hooks/fleet-guidance.md`, `fleet-memory.sh` and `guidance-load-record.sh`:
+it deletes any copy it finds, along with exactly the `settings.json` entries
+that registered them. This repo keeps `fleet-memory.sh` and `guidance-load-record.sh`
 because they are the source the owner's routes download, and the tests run
 them. A PR that changes `base.md` shows the owner's next payload; one that
 changes `stub.md` shows the text each consumer repo's `AGENTS.md` gets on the
