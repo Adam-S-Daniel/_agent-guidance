@@ -375,7 +375,7 @@ privacy_push_ref() {
     done
   fi
   if [ -n "$place_hits" ]; then
-    problem privacy "refusing this push: $place_hits holds this machine's account name or hostname, and a pushed ref name or commit message is public for good. Rename the branch (git branch -m) or reword the commit (git commit --amend, or git rebase -r for older ones) with a placeholder or the machine's role, then push again. An "identity" place is the commit's author or committer name or email: set a public identity (a users.noreply.github.com email) and rewrite it with git commit --amend --reset-author. The identity is not printed here on purpose. If it is there on purpose, push once with AGENT_CHECKS_LOCAL_USER= or AGENT_CHECKS_LOCAL_HOST= set to empty."
+    problem privacy "refusing this push: $place_hits holds this machine's account name or hostname, and a pushed ref name or commit message is public for good. Rename the branch (git branch -m) or reword the commit (git commit --amend, or git rebase -r for older ones) with a placeholder or the machine's role, then push again. An identity place is the commit's author or committer name or email: set a public identity (a users.noreply.github.com email) and rewrite it with git commit --amend --reset-author. The identity is not printed here on purpose. If it is there on purpose, push once with AGENT_CHECKS_LOCAL_USER= or AGENT_CHECKS_LOCAL_HOST= set to empty."
   fi
   privacy_denylist_present || return 0
   if ! command -v python3 > /dev/null 2>&1 || [ ! -f "$privacy_script" ]; then
@@ -390,7 +390,7 @@ privacy_push_ref() {
   if [ "$rc" = 1 ] && [ "${out#FAILED:}" = "$out" ]; then rc=2; fi
   case "$rc" in
     0|3) ;;
-    1) problem privacy "refusing this push: a denylisted term is in a ref name or commit the push would publish, and a pushed ref name or commit message is public for good. Fix the branch name (git branch -m) or reword the commit (git commit --amend, or git rebase -r), then push again. An "identity" place is the commit's author or committer name or email: set a public identity (a users.noreply.github.com email) and rewrite it with git commit --amend --reset-author. The places and pattern numbers follow (the number counts your denylist's patterns from 1, skipping comment and blank lines; the text is never printed): $places" ;;
+    1) problem privacy "refusing this push: a denylisted term is in a ref name or commit the push would publish, and a pushed ref name or commit message is public for good. Fix the branch name (git branch -m) or reword the commit (git commit --amend, or git rebase -r), then push again. An identity place is the commit's author or committer name or email: set a public identity (a users.noreply.github.com email) and rewrite it with git commit --amend --reset-author. The places and pattern numbers follow (the number counts your denylist's patterns from 1, skipping comment and blank lines; the text is never printed): $places" ;;
     *) problem privacy "the privacy denylist could not be checked (privacy-denylist.py exited $rc: an unreadable or invalid denylist, or git failing), so this push is held. Run python3 $privacy_script --repo . --ref <branch> to see the error, or fix the file." ;;
   esac
   return 0
