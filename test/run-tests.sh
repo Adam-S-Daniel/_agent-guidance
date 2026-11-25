@@ -25886,7 +25886,10 @@ test_self_hosted_gitattributes() {
 # the network or a real `gh`. The `--body-file` legs point at files in this
 # test's own temp dir, passed as absolute paths, so `cwd` cannot leak in.
 # AGENT_NAME is pinned empty so the block message's footer is the Claude Code
-# one whatever the invoking shell exports. See docs/decisions/0023.
+# one whatever the invoking shell exports. The privacy denylist and the
+# machine identity are pinned too (GWM_DENYLIST, GWM_USER, GWM_HOST; none by
+# default), so no leg depends on the machine the suite runs on. See
+# docs/decisions/0023.
 test_github_write_marker_hook() {
     echo ""
     echo "TEST: github-write-marker.sh (an agent's GitHub write carries the marker)"
@@ -25905,8 +25908,11 @@ test_github_write_marker_hook() {
     gwm() {
         local want="$1" label="$2" event="$3" rc=0
         n=$((n + 1))
-        printf '%s' "$event" | env AGENT_NAME= bash "$GWM_HOOK" \
-            > "$d/out-$n" 2> "$d/err-$n" || rc=$?
+        printf '%s' "$event" | env AGENT_NAME= \
+            PRIVACY_DENYLIST_FILE="${GWM_DENYLIST:-$d/no-denylist.txt}" \
+            AGENT_CHECKS_LOCAL_USER="${GWM_USER:-}" \
+            AGENT_CHECKS_LOCAL_HOST="${GWM_HOST:-}" \
+            bash "$GWM_HOOK" > "$d/out-$n" 2> "$d/err-$n" || rc=$?
         if [[ "$rc" == "$want" ]]; then
             pass "github-write-marker: $label exits $want"
         else
@@ -26049,7 +26055,110 @@ print(json.dumps(ev))' "$command" "$cwd")"
     gwmc 2 "unmarked gh pr comment after a heredoc" \
         "cat <<'EOF' > notes.txt${nl}It's a note; gh is mentioned.${nl}EOF${nl}gh pr comment 1 --body hi"
 
-    unset -f gwm gwmc
+    # ── Privacy denylist: a personal detail never reaches GitHub ──
+    # The terms are made up; the block message must name the field and the
+    # pattern number and never the term or the pattern.
+    printf '# a comment line\nzebrafinch\nsecret-place-[0-9]+\n' > "$d/denylist.txt"
+    printf 'Body about zebrafinch.\n\n%s\n' "$mark" > "$d/denied-body.md"
+    local GWM_DENYLIST="$d/denylist.txt" GWM_USER=exampleuser GWM_HOST=examplebox
+    # <label> — no output file holds a denylisted term or pattern.
+    gwm_quiet() {
+        if grep -qiE 'zebrafinch|secret-place|exampleuser|examplebox' "$d/err-$n" "$d/out-$n"; then
+            fail "github-write-marker: $1 — the hook's output names the detail"
+        else
+            pass "github-write-marker: $1 — the hook's output names no detail"
+        fi
+    }
+    gwmc 2 "denylisted term in a gh issue comment body" \
+        "gh issue comment 5 --body \"About ZebraFinch. $mark\""
+    assert_contains "$d/err-$n" "body" \
+        "github-write-marker: the denylist block names the field"
+    assert_contains "$d/err-$n" "pattern #1" \
+        "github-write-marker: the denylist block names the pattern number"
+    gwm_quiet "a denylist block"
+    gwmc 2 "denylisted term in a gh pr create title" \
+        "gh pr create --title 'Fix zebrafinch' --body \"ok $mark\""
+    assert_contains "$d/err-$n" "title" \
+        "github-write-marker: a title match names the title"
+    gwmc 2 "denylisted term in a gh pr create --head" \
+        "gh pr create --title T --head secret-place-42 --body \"ok $mark\""
+    assert_contains "$d/err-$n" "pattern #2" \
+        "github-write-marker: the pattern number skips comment lines"
+    gwm_quiet "a --head block"
+    gwmc 2 "denylisted term in a --body-file" \
+        "gh pr create --title T --body-file $d/denied-body.md"
+    gwmc 2 "denylisted term in a heredoc read from stdin" \
+        "gh pr create --title T --body-file - <<'EOF'${nl}About zebrafinch.${nl}${mark}${nl}EOF"
+    gwmc 2 "denylisted term in a \$(cat <<EOF) body" \
+        "gh pr create --title T --body \"\$(cat <<'EOF'${nl}About zebrafinch.${nl}${mark}${nl}EOF${nl})\""
+    gwmc 2 "denylisted term in a gh issue close --comment" \
+        "gh issue close 5 --comment 'zebrafinch done'"
+    gwmc 2 "denylisted term in a gh api field" \
+        "gh api -X POST repos/o/r/git/refs -f ref=refs/heads/zebrafinch -f sha=abc"
+    gwmc 2 "denylisted term in a gh api body=@file" \
+        "gh api repos/o/r/issues/5/comments -F body=@$d/denied-body.md"
+    gwmc 2 "git push <sha>:refs/heads/<denylisted name>" \
+        "git push origin 0123abc:refs/heads/zebrafinch-work"
+    assert_contains "$d/err-$n" "pushed ref" \
+        "github-write-marker: a push block names the pushed ref"
+    gwmc 2 "git -C dir push -u origin <denylisted name>" \
+        "git -C /tmp push -u origin feature/zebrafinch"
+    git init -q -b zebrafinch-local "$d/pushrepo"
+    gwmc 2 "git push of a current branch with a denylisted name" \
+        "git push -u origin HEAD" "$d/pushrepo"
+    assert_contains "$d/err-$n" "pushed branch" \
+        "github-write-marker: a current-branch push block names the branch"
+    gwmc 2 "the account name in a home-directory path" \
+        "gh issue comment 5 --body \"see /home/exampleuser/x $mark\""
+    assert_contains "$d/err-$n" "account name" \
+        "github-write-marker: an identity block names which identity"
+    gwm_quiet "an identity block"
+    gwmc 2 "the hostname in a branch name" \
+        "git push origin HEAD:examplebox-fix"
+    assert_contains "$d/err-$n" "hostname" \
+        "github-write-marker: a hostname block says hostname"
+    gwm 2 "denylisted term in an MCP create_branch" \
+        '{"tool_name":"mcp__github__create_branch","tool_input":{"owner":"o","repo":"r","branch":"zebrafinch-1"}}'
+    assert_contains "$d/err-$n" "branch" \
+        "github-write-marker: an MCP block names the input key"
+    gwm 2 "denylisted term in a marked MCP add_issue_comment" \
+        '{"tool_name":"mcp__claude_ai_github-mcp__add_issue_comment","tool_input":{"owner":"o","repo":"r","issue_number":5,"body":"zebrafinch <sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>"}}'
+    gwm_quiet "an MCP block"
+
+    gwmc 0 "a clean marked comment with the denylist on" \
+        "gh issue comment 5 --body \"All clean. $mark\""
+    gwmc 0 "the account name outside a home path" \
+        "gh issue comment 5 --body \"exampleuser2 and /home/exampleuser2/x $mark\""
+    gwmc 0 "a read: gh api -X GET with a denylisted query" \
+        "gh api -X GET search/issues -f q=zebrafinch"
+    gwmc 0 "a denylisted term outside any GitHub write" \
+        "echo zebrafinch"
+    gwm 0 "a denylisted term in an MCP read" \
+        '{"tool_name":"mcp__github__search_issues","tool_input":{"query":"zebrafinch"}}'
+    gwm 0 "a denylisted term in an MCP owner or repo" \
+        '{"tool_name":"mcp__github__create_branch","tool_input":{"owner":"zebrafinch","repo":"zebrafinch","branch":"main-2"}}'
+    gwmc 0 "git push of a clean branch" \
+        "git push -u origin feature/clean"
+
+    printf 'zebrafinch\n[unclosed\n' > "$d/bad-denylist.txt"
+    GWM_DENYLIST="$d/bad-denylist.txt"
+    gwmc 2 "a valid pattern still blocks beside an invalid one" \
+        "gh issue comment 5 --body \"zebrafinch $mark\""
+    assert_contains "$d/err-$n" "pattern #2 is not a valid" \
+        "github-write-marker: an invalid pattern is named by number"
+    gwm_quiet "an invalid-pattern warning"
+
+    # No denylist file (a cloud session): identity names only, never a failure.
+    GWM_DENYLIST="$d/no-denylist.txt"
+    gwmc 0 "no denylist file: a clean write passes" \
+        "gh issue comment 5 --body \"zebrafinch $mark\""
+    gwmc 2 "no denylist file: the hostname is still checked" \
+        "gh issue comment 5 --body \"from examplebox $mark\""
+    GWM_USER=root GWM_HOST=vm
+    gwmc 0 "generic identity names are not checked" \
+        "gh issue comment 5 --body \"/home/root/vm $mark\""
+
+    unset -f gwm gwmc gwm_quiet
 }
 
 # ── Groups ─────────────────────────────────────────────────────────────────
