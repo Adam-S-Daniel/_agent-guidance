@@ -71,11 +71,13 @@ function checkWindow(doc) {
 
 /** An IANA name, spelled as the tz database spells it. Intl also takes lower
  * case and offsets such as "+05:00", which skills-evals' Python reader
- * (zoneinfo) refuses, so both readers accept the same values: every part
- * starts with a capital, and a name Intl resolves to the same letters in
- * another case is refused. A name Intl resolves to a different one is a tz
- * database link, which zoneinfo loads too: Intl renames Asia/Kolkata to
- * Asia/Calcutta and Europe/Kyiv to Europe/Kiev, and both are valid. */
+ * (zoneinfo) refuses, so this refuses them too: every part starts with a
+ * capital, and a name Intl resolves to the same letters in another case is
+ * refused. A name Intl resolves to a different one is taken as a tz database
+ * link, which zoneinfo loads too: Intl renames Asia/Kolkata to Asia/Calcutta
+ * and Europe/Kyiv to Europe/Kiev, and both are valid. Intl cannot tell a link
+ * from a link in the wrong case, so one of those (Asia/KOLKATA, Etc/Utc, Gmt)
+ * passes here and fails in zoneinfo: write the name as the tz database does. */
 function validZone(zone) {
   if (!/^[A-Z][A-Za-z0-9_+-]*(\/[A-Z][A-Za-z0-9_+-]*)*$/.test(zone)) return false;
   try {
