@@ -122,6 +122,12 @@ class HookTestCase(unittest.TestCase):
             "GUIDANCE_RECORD_NOW": NOW,
             # The API and git seams are read only under this test marker.
             "GUIDANCE_RECORD_TEST": "1",
+            # The hook's budgets (15 s in all, phase 2's 4 s collect and 6 s
+            # upload) run on a counter clock, 1 ms per reading: on the real
+            # clock a loaded machine ran the upload out of time mid-commit and
+            # the line stayed pending. A case may pass its own tick ("" is the
+            # real clock); real time still bounds each call (the 10 s cap).
+            "GUIDANCE_RECORD_TEST_TICK": "0.001",
             "GUIDANCE_RECORD_API": "https://api.example.com",
             "FAKE_CURL_LOG": str(self.curl_log),
             "FAKE_CURL_SCRIPT": str(self.curl_script),
@@ -1000,18 +1006,6 @@ FAKE_GIT = textwrap.dedent("""\
     os.execv(os.environ["FAKE_GIT_REAL"], ["git"] + argv)
     """)
 
-# The fake curl for the time-bound test: answers the probe with push true,
-# but only after using all but 0.02 s of its --max-time.
-SLOW_CURL = textwrap.dedent("""\
-    #!/usr/bin/env python3
-    import json, sys, time
-    argv = sys.argv[1:]
-    sys.stdin.read()
-    time.sleep(max(0, float(argv[argv.index("--max-time") + 1]) - 0.02))
-    with open(argv[argv.index("-o") + 1], "w", encoding="utf-8") as handle:
-        json.dump({"permissions": {"push": True}}, handle)
-    sys.stdout.write("200")
-    """)
 
 
 def fixture_git(*args, cwd):
@@ -1939,7 +1933,7 @@ class CloudGateTests(CloudTestCase):
     def test_phase_1_and_phase_2_stay_under_the_stop_timeout_when_every_call_hangs(self):
         # On a fake clock, so the bound is the hook's budgeting, not how fast
         # this machine is: every curl uses its whole --max-time and then grants
-        # push, as SLOW_CURL does below; every git call hangs to its whole cap,
+        # push; every git call hangs to its whole cap,
         # then the reap waits MIN_CALL. The hook's real budgets apply (no
         # SCALE), and the run must end inside the 20-second Stop timeout.
         env = dict(self.env, **self.cloud_env, GUIDANCE_HOOK_INPUT=json.dumps({
@@ -1968,12 +1962,16 @@ class CloudGateTests(CloudTestCase):
         self.assertEqual([p["id"] for p in self.pending()], ["toolu_g1"])
 
     def test_a_hung_call_is_killed_with_its_children_and_the_use_kept(self):
-        # The same Stop through the real hook: every curl uses its whole
-        # --max-time; every clone, fetch and push hangs with a child holding
-        # its pipe. Its run time is bounded by the test above, not here.
-        (self.bin / "curl").write_text(SLOW_CURL, encoding="utf-8")
+        # The same Stop through the real hook: every clone, fetch and push
+        # hangs with a child holding its pipe. Its run time is bounded by the
+        # test above, not here. The curl probe answers at once: the budgets run
+        # on the counter clock, so a curl sleeping out its --max-time spent no
+        # budget, and under load overran the kill at --max-time + MIN_CALL,
+        # so no clone ran. Each call's kill is still real time (CALL_CAP x
+        # SCALE): at 0.3 a fake git gets 3 s to start and log before it, where
+        # 0.12's 1.2 s missed under load.
         self.stop(env={"FAKE_GIT_MODE": "hang-network", "GUIDANCE_RECORD_TEST": "1",
-                       "GUIDANCE_RECORD_TEST_SCALE": "0.12"})
+                       "GUIDANCE_RECORD_TEST_SCALE": "0.3"})
         # It did wait on the hung calls, rather than skip them.
         self.assertTrue(any("clone" in c for c in self.git_calls()))
         # The timeout killed the whole process group, the hung child included.
@@ -2856,6 +2854,18 @@ class ClockSeamTests(HookTestCase):
         self.assertNotEqual(record["ts"], "2001-01-01T00:00:00Z")
         self.run_hook(session="session-two", env={"GUIDANCE_RECORD_NOW": "2001-01-01T00:00:00Z"})
         self.assertEqual(self.records()[1]["ts"], "2001-01-01T00:00:00Z")
+
+    def test_every_case_runs_the_budgets_on_the_counter_clock(self):
+        # Regression: on the real clock a loaded machine ran phase 2's 6 s
+        # upload budget out mid-commit, so a read line stayed pending and
+        # CloudReadTests saw an empty shard. Here each real clock reading is
+        # an hour after the last; the default case env must not notice.
+        real = iter(range(0, 1 << 40, 3600))
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                mock.patch("time.monotonic", lambda: float(next(real))):
+            hook = hook_module()
+            deadline = hook["monotonic"]() + hook["NET_BUDGET"]
+            self.assertGreaterEqual(hook["cap_for"](deadline), hook["MIN_CALL"])
 
 
 if __name__ == "__main__":
