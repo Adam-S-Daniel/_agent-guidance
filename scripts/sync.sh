@@ -116,6 +116,13 @@ AC_GUARD_MATCHER="Bash|Edit|Write|MultiEdit|NotebookEdit"
 AC_DATED_FILES=(dated-phrasing.js dated-phrasing-allowlist.txt
                 dated-phrasing/package.json dated-phrasing/package-lock.json
                 privacy-denylist.py)
+# ── privacy-comment-alert lane (issue #636) ──
+# Rides the agent_checks.deliver switch. The scan script is MANAGED under
+# .githooks/ (beside privacy-denylist.py, which it imports); the workflow is
+# ADDED once and never overwritten, like agent-checks.yml.
+PCA_TEMPLATE_DIR="$REPO_ROOT/templates/privacy-comment-alert"
+PCA_SCAN_REL_PATH=".githooks/privacy-comment-scan.py"
+PCA_WF_REL_PATH=".github/workflows/privacy-comment-alert.yml"
 # The runner is run by bash from git hooks, so a CRLF checkout breaks it the
 # same way it breaks the .claude/hooks scripts (ADR 0019): a second managed line.
 AC_EOL_LINE='.githooks/* text eol=lf'
@@ -527,6 +534,16 @@ if [[ "$(read_repos_yml '.agent_checks.deliver // false')" == "true" ]]; then
     if ! $AGENT_CHECKS_ENABLED; then
         echo "::warning::repos.yml turns on agent_checks.deliver, but $AGENT_CHECKS_TEMPLATE_DIR is missing a template — not delivering it this run." >&2
     fi
+fi
+
+# ── privacy-comment-alert delivery (rides agent_checks.deliver) ──────────────
+PCA_ENABLED=false
+if $AGENT_CHECKS_ENABLED; then
+    PCA_ENABLED=true
+    for pca_template in privacy-comment-scan.py privacy-comment-alert.yml; do
+        [[ -s "$PCA_TEMPLATE_DIR/$pca_template" ]] || PCA_ENABLED=false
+    done
+    $PCA_ENABLED || echo "::warning::$PCA_TEMPLATE_DIR is missing a template — not delivering the privacy-comment-alert lane this run." >&2
 fi
 
 # ── agent-checks workflow trigger (ADR 0021, 2026-11-02 addendum) ──────────
@@ -1737,6 +1754,44 @@ for repo_name in "${REPOS[@]}"; do
         ac_up_to_date=false
     fi
 
+    # ── privacy-comment-alert: classify ────────────────────────────────
+    #   scan      missing | current | drifted | skipped (gitignored)
+    #   workflow  missing | present | skipped (actions.lock, platform.lock, gitignored)
+    pca_scan_state="n/a"; pca_wf_state="n/a"
+    if $PCA_ENABLED; then
+        if git check-ignore -q "$PCA_SCAN_REL_PATH" 2>/dev/null; then
+            pca_scan_state="skipped"
+            log "WARN: $PCA_SCAN_REL_PATH is gitignored in $repo_name — the privacy-comment-alert scan script is not delivered."
+        elif [[ ! -f "$PCA_SCAN_REL_PATH" ]]; then
+            pca_scan_state="missing"
+        elif cmp -s "$PCA_SCAN_REL_PATH" "$PCA_TEMPLATE_DIR/privacy-comment-scan.py"; then
+            pca_scan_state="current"
+        else
+            pca_scan_state="drifted"
+        fi
+        if [[ -e "$PCA_WF_REL_PATH" ]]; then
+            pca_wf_state="present"
+        elif [[ "$pca_scan_state" == "skipped" ]]; then
+            pca_wf_state="skipped"
+        elif [[ -e .github/workflows/actions.lock ]]; then
+            pca_wf_state="skipped"
+            log "WARN: $repo_name locks its actions in .github/workflows/actions.lock — the privacy-comment-alert workflow is not delivered (its uses: lines must be tags locked by gh actions-lock, which the sync cannot run). Add it by hand."
+        elif [[ -e platform.lock ]]; then
+            pca_wf_state="skipped"
+            log "privacy-comment-alert: $repo_name is a cms-platform consumer (platform.lock) — the workflow is not delivered; the platform carries it instead."
+        elif git check-ignore -q "$PCA_WF_REL_PATH" 2>/dev/null; then
+            pca_wf_state="skipped"
+            log "WARN: $PCA_WF_REL_PATH is gitignored in $repo_name — not delivered."
+        else
+            pca_wf_state="missing"
+        fi
+        log "privacy-comment-alert: scan=$pca_scan_state workflow=$pca_wf_state"
+    fi
+    pca_up_to_date=true
+    if [[ "$pca_scan_state" == "missing" || "$pca_scan_state" == "drifted" || "$pca_wf_state" == "missing" ]]; then
+        pca_up_to_date=false
+    fi
+
     # ── skill shell execution: state ───────────────────────────────────
     # A repo whose .claude/ is gitignored, or whose settings.json is not
     # parseable, is a refusal, not a failure (same as the hooks above).
@@ -1752,7 +1807,7 @@ for repo_name in "${REPOS[@]}"; do
     skillshell_up_to_date=true
     [[ "$skillshell_state" == "unset" ]] && skillshell_up_to_date=false
 
-    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $retire_up_to_date && $contributor_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $depcfg_up_to_date && $ac_up_to_date && $skillshell_up_to_date; then
+    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $retire_up_to_date && $contributor_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $depcfg_up_to_date && $ac_up_to_date && $pca_up_to_date && $skillshell_up_to_date; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -1847,6 +1902,13 @@ for repo_name in "${REPOS[@]}"; do
 
         if ! $depcfg_up_to_date; then
             log "[DRY RUN] Would write $DEPCFG_REL_PATH (managed Dependabot config, $depcfg_state) $delivery_note"
+        fi
+
+        if ! $pca_up_to_date; then
+            [[ "$pca_scan_state" == "missing" || "$pca_scan_state" == "drifted" ]] \
+                && log "[DRY RUN] Would write $PCA_SCAN_REL_PATH (privacy-comment-alert scan $pca_scan_state) $delivery_note"
+            [[ "$pca_wf_state" == "missing" ]] \
+                && log "[DRY RUN] Would add $PCA_WF_REL_PATH (the privacy-comment-alert workflow) $delivery_note"
         fi
 
         if ! $ac_up_to_date; then
@@ -2079,6 +2141,21 @@ for repo_name in "${REPOS[@]}"; do
         log "dependabot config: $DEPCFG_REL_PATH $([[ "$depcfg_state" == "drifted" ]] && echo updated || echo added)."
     fi
 
+    # ── privacy-comment-alert: write ───────────────────────────────────
+    pca_scan_written=false; pca_wf_written=false
+    if ! $pca_up_to_date; then
+        if [[ "$pca_scan_state" == "missing" || "$pca_scan_state" == "drifted" ]]; then
+            mkdir -p "$(dirname "$PCA_SCAN_REL_PATH")"
+            cp "$PCA_TEMPLATE_DIR/privacy-comment-scan.py" "$PCA_SCAN_REL_PATH"
+            pca_scan_written=true
+        fi
+        if [[ "$pca_wf_state" == "missing" ]]; then
+            mkdir -p "$(dirname "$PCA_WF_REL_PATH")"
+            cp "$PCA_TEMPLATE_DIR/privacy-comment-alert.yml" "$PCA_WF_REL_PATH"
+            pca_wf_written=true
+        fi
+    fi
+
     # ── agent-checks: write ────────────────────────────────────────────
     ac_runner_written=false; ac_dated_written=false; ac_wf_written=false; ac_eol_written=false
     ac_guard_written=false; ac_registered_now=false; ac_trigger_written=false; ac_secret_written=false
@@ -2163,6 +2240,7 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     ac_any_written=false
+    if $pca_scan_written || $pca_wf_written; then ac_any_written=true; fi
     if $ac_runner_written || $ac_dated_written || $ac_wf_written || $ac_trigger_written || $ac_secret_written || $ac_eol_written || $ac_guard_written || $ac_registered_now; then
         ac_any_written=true
     fi
@@ -2176,6 +2254,8 @@ for repo_name in "${REPOS[@]}"; do
     $ac_trigger_written && add_paths+=("$AC_WF_REL_PATH")
     $ac_secret_written && add_paths+=("$AC_WF_REL_PATH")
     $ac_guard_written && add_paths+=("$AC_GUARD_REL_PATH")
+    $pca_scan_written && add_paths+=("$PCA_SCAN_REL_PATH")
+    $pca_wf_written && add_paths+=("$PCA_WF_REL_PATH")
     # git add takes a path twice without complaint, so the files the other
     # lanes may also have touched need no once-only bookkeeping here.
     $ac_eol_written && add_paths+=("$GITATTR_REL_PATH")
@@ -2287,6 +2367,17 @@ hook registrations this sync wrote for them (matched by command string; every
 other entry is preserved). The fleet owner's own setup installs that guidance
 into the owner's sessions; this repo's AGENTS.md stub and
 $CONTRIBUTOR_REL_PATH carry what any contributor needs."
+    fi
+
+    if $pca_scan_written || $pca_wf_written; then
+        bootstrap_note="${bootstrap_note}
+
+Delivers the privacy-comment-alert check ($PCA_WF_REL_PATH and
+$PCA_SCAN_REL_PATH): on an issue, comment or review event it scans the text for
+a denylisted term and, on a match, dispatches the fleet's self-alert email
+(naming only this repository and the scanning run). It never edits or deletes
+the text, and it is not a required check. Managed by _agent-guidance's
+templates/privacy-comment-alert/."
     fi
 
     if $ac_any_written; then
