@@ -250,6 +250,13 @@ def block_denylist(field, what):
 GENERIC_USERS = {"root", "runner", "user", "ubuntu", "agent", "codex", "node",
                  "vscode", "dev", "admin", "administrator", "codespace",
                  "gitpod", "git", "nobody"}
+# Hostnames that are ordinary words or stock image names (agent-checks'
+# local_generic_hosts), so a body saying "ubuntu-latest" or "the build" on a
+# machine named that way is not a leak.
+GENERIC_HOSTS = {"ubuntu", "debian", "fedora", "centos", "alpine", "arch",
+                 "raspberrypi", "build", "main", "master", "dev", "devbox",
+                 "server", "desktop", "laptop", "workstation", "runner", "home",
+                 "test"}
 
 
 def denylist_patterns():
@@ -307,6 +314,7 @@ def identity_patterns():
                                r"([^A-Za-z0-9_-]|$)|-home-%s-" % (u, u))))
     lower = host.lower()
     if ("\n" not in host and len(host) >= 4 and lower != "localhost"
+            and lower not in GENERIC_HOSTS
             and not (re.fullmatch(r"[0-9a-f]+", lower) and len(host) >= 12)):
         out.append(("this machine's hostname",
                     re.compile(r"(^|[^A-Za-z0-9])%s([^A-Za-z0-9]|$)"

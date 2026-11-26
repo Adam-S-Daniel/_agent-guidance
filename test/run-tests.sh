@@ -26194,6 +26194,12 @@ print(json.dumps(ev))' "$command" "$cwd")"
     GWM_USER=root GWM_HOST=vm
     gwmc 0 "generic identity names are not checked" \
         "gh issue comment 5 --body \"/home/root/vm $mark\""
+    GWM_USER= GWM_HOST=ubuntu
+    gwmc 0 "a stock hostname (ubuntu) is not checked, so ubuntu-latest passes" \
+        "gh issue comment 5 --body \"runs on ubuntu-latest $mark\""
+    GWM_USER= GWM_HOST=examplebox
+    gwmc 2 "a non-stock hostname is still checked" \
+        "gh issue comment 5 --body \"runs on examplebox $mark\""
 
     # ── Codex runs the same script as a plugin hook ──
     GWM_USER= GWM_HOST= GWM_DENYLIST="$d/denylist.txt"
