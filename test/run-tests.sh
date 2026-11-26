@@ -27269,13 +27269,8 @@ $sec_line
     fi
     assert_contains "$out-platform" "privacy-comment-alert: acorg/ac-platform is a cms-platform consumer (platform.lock)" \
         "privacy-comment-alert (sync): the platform.lock skip is named in the log"
-    assert_contains "$out-platform" "cms-platform does not carry it yet" \
-        "privacy-comment-alert (sync): the platform.lock line does not claim the platform carries it"
-    if ! grep -q "the platform carries it instead" "$out-platform"; then
-        pass "privacy-comment-alert (sync): no log line says the platform carries the workflow"
-    else
-        fail "privacy-comment-alert (sync): no log line says the platform carries the workflow"
-    fi
+    assert_contains "$out-platform" "privacy-comment-alert: acorg/ac-platform is a cms-platform consumer (platform.lock) — the workflow is not delivered; its platform-pin-consistency check rejects any workflow the platform does not dictate. The platform carries it instead" \
+        "privacy-comment-alert (sync): the platform.lock line says the platform carries the workflow (#653)"
     got=$(gattr_git -C "$bare/acorg_ac-none" log -1 --format=%B main)
     if [[ "$got" == *"Delivers the privacy-comment-alert check"* ]]; then
         pass "privacy-comment-alert (sync): the commit says what it delivers"

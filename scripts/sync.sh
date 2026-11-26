@@ -1786,7 +1786,7 @@ for repo_name in "${REPOS[@]}"; do
             log "WARN: $repo_name locks its actions in .github/workflows/actions.lock — the privacy-comment-alert workflow is not delivered (its uses: lines must be tags locked by gh actions-lock, which the sync cannot run). Add it by hand."
         elif [[ -e platform.lock ]]; then
             pca_wf_state="skipped"
-            log "privacy-comment-alert: $repo_name is a cms-platform consumer (platform.lock) — the workflow is not delivered, and cms-platform does not carry it yet."
+            log "privacy-comment-alert: $repo_name is a cms-platform consumer (platform.lock) — the workflow is not delivered; its platform-pin-consistency check rejects any workflow the platform does not dictate. The platform carries it instead (cms-platform v0.1.193+, seeded by its next platform bump)."
         elif git check-ignore -q "$PCA_WF_REL_PATH" 2>/dev/null; then
             pca_wf_state="skipped"
             log "WARN: $PCA_WF_REL_PATH is gitignored in $repo_name — not delivered."
