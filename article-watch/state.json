@@ -131,6 +131,11 @@
       "seen_at": "2026-11-07T11:08:11+00:00",
       "title": "Scaling Managed Agents: Decoupling the brain from the hands"
     },
+    "https://www.anthropic.com/research/migrating-api-to-rust": {
+      "link": "https://www.anthropic.com/research/migrating-api-to-rust",
+      "seen_at": "2026-11-26T03:06:11+00:00",
+      "title": "Migrating our Messages API to Rust"
+    },
     "https://www.anthropic.com/research/multi-agent-research-system": {
       "link": "https://www.anthropic.com/research/multi-agent-research-system",
       "seeded": true,
