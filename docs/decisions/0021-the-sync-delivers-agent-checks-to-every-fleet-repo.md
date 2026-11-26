@@ -179,3 +179,13 @@ The runner is delivered to every repo, but a cloud session never ran it as a git
 - **Opt-out.** `FLEET_GIT_HOOKS=off` skips it. The test suite sets it, so a cloud container running the suite does not edit its own git config.
 - **The include text is copied, not read.** adam-agentskills is not available in CI, so `test_fleet_memory_git_hooks` embeds the expected text with a comment naming its source. If the installer's output changes, change both.
 - **Their runs are uploaded.** With the hooks running, the cloud runs reach the private usage store as phase 3 of `guidance-load-record.sh` (ADR 0036, ADR 0037 addenda).
+
+## Addendum (2026-11-26): a comment that holds a denylisted term alerts the owner
+
+A cloud session has no local denylist file, so a private term in its prompt can reach an issue or PR comment that no pre-push check sees. The sync now also delivers `templates/privacy-comment-alert/` (issue 636) under the same `agent_checks.deliver` switch:
+
+- **`.github/workflows/privacy-comment-alert.yml`** runs on `issue_comment`, `pull_request_review_comment` (created, edited), `issues` (opened, edited) and `pull_request_review` (submitted, edited), with `contents: read` only. It is added once and never overwritten, and skipped like `agent-checks.yml` for a repo with `actions.lock` (add it by hand with tag-locked actions) or `platform.lock`.
+- **`.githooks/privacy-comment-scan.py`** is managed like the runner. It reads the text from `$GITHUB_EVENT_PATH`, loads the `PRIVACY_DENYLIST` secret's patterns through `privacy-denylist.py` (same format, case-insensitive), and prints one word: `match`, `clean`, `no-denylist` or `error`. The log shows nothing else.
+- **Alert only.** It never edits or deletes the text: an edit leaves history, and a delete could remove the evidence. On a match it mints an App token and dispatches `send-self-alert.yml` in the repository named by the `SELF_ALERT_REPO` variable (the route cms-platform's publish watchdog uses; `SELF_ALERT_APP_ID`, `SELF_ALERT_REPO`, secret `SELF_ALERT_APP_PRIVATE_KEY`). The dispatch inputs are public run metadata, so they carry fixed text naming the repository and the scanning run's URL, never the text, a pattern or a link to the comment. With the route unconfigured it prints a non-identifying warning and passes; with no `PRIVACY_DENYLIST` it skips silently.
+- **Not a required check, and not path-filtered.** It runs on comment events, not on `pull_request` code, so it can never report on a PR's head and a required context would block every merge. Workflows for these events run the default branch's copy.
+- **Bots are scanned too.** The workflow writes no comment, so it cannot loop, and a bot that posts the term is a leak like any other.

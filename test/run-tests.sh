@@ -26952,6 +26952,11 @@ test_sync_agent_checks() {
     fi
     assert_not_contains "$out-off.log" "agent-checks" \
         "agent-checks (off): the run does not mention the lane at all"
+    if [[ -z "$(ac_show ac-none .githooks/privacy-comment-scan.py)" && -z "$(ac_show ac-none .github/workflows/privacy-comment-alert.yml)" ]]; then
+        pass "privacy-comment-alert (off): with deliver unset neither file is delivered"
+    else
+        fail "privacy-comment-alert (off): with deliver unset neither file is delivered"
+    fi
 
     # ── Dry run with the switch on: reported, nothing written ──
     before=$(bare_fleet_fingerprint "$bare")
@@ -26979,6 +26984,11 @@ test_sync_agent_checks() {
     else
         fail "agent-checks (dry run): the workflow lacking edited is left as it was"
     fi
+
+    assert_contains "$out-dry-none" "[DRY RUN] Would write .githooks/privacy-comment-scan.py (privacy-comment-alert scan missing)" \
+        "privacy-comment-alert (dry run): the scan script is reported"
+    assert_contains "$out-dry-none" "[DRY RUN] Would add .github/workflows/privacy-comment-alert.yml" \
+        "privacy-comment-alert (dry run): the workflow is reported"
 
     # ── The real run ──
     rc=0; run_ac_sync "$TEST_DIR/ac-repos-on.yml" "$out-1.log" || rc=$?
@@ -27130,6 +27140,36 @@ for g in doc["hooks"]["PreToolUse"]:
         pass "agent-checks (trigger): the commit says why the workflow was edited"
     else
         fail "agent-checks (trigger): the commit says why the workflow was edited — got: $(head -1 <<< "$got")"
+    fi
+
+    # The privacy-comment-alert lane rides the same switch and the same skips.
+    local pca_tmpl="$REPO_ROOT/templates/privacy-comment-alert"
+    local pca_scan=".githooks/privacy-comment-scan.py" pca_wf=".github/workflows/privacy-comment-alert.yml"
+    if cmp -s <(ac_show ac-none "$pca_scan") "$pca_tmpl/privacy-comment-scan.py" \
+       && cmp -s <(ac_show ac-none "$pca_wf") "$pca_tmpl/privacy-comment-alert.yml"; then
+        pass "privacy-comment-alert (sync): the scan script and workflow arrive byte for byte"
+    else
+        fail "privacy-comment-alert (sync): the scan script and workflow arrive byte for byte"
+    fi
+    if [[ -z "$(ac_show ac-lock "$pca_wf")" ]] && cmp -s <(ac_show ac-lock "$pca_scan") "$pca_tmpl/privacy-comment-scan.py"; then
+        pass "privacy-comment-alert (sync): a repo with actions.lock gets the scan script but not the workflow"
+    else
+        fail "privacy-comment-alert (sync): a repo with actions.lock gets the scan script but not the workflow"
+    fi
+    assert_contains "$out-lock" "the privacy-comment-alert workflow is not delivered" \
+        "privacy-comment-alert (sync): the actions.lock skip is named in the log"
+    if [[ -z "$(ac_show ac-platform "$pca_wf")" ]]; then
+        pass "privacy-comment-alert (sync): a cms-platform consumer (platform.lock) gets no workflow"
+    else
+        fail "privacy-comment-alert (sync): a cms-platform consumer (platform.lock) gets no workflow"
+    fi
+    assert_contains "$out-platform" "privacy-comment-alert: acorg/ac-platform is a cms-platform consumer (platform.lock)" \
+        "privacy-comment-alert (sync): the platform.lock skip is named in the log"
+    got=$(gattr_git -C "$bare/acorg_ac-none" log -1 --format=%B main)
+    if [[ "$got" == *"Delivers the privacy-comment-alert check"* ]]; then
+        pass "privacy-comment-alert (sync): the commit says what it delivers"
+    else
+        fail "privacy-comment-alert (sync): the commit says what it delivers"
     fi
 
     # ── Re-run: nothing left to do ──
@@ -28488,11 +28528,118 @@ test_self_agent_checks() {
     else
         fail "self agent-checks: a workflow runs the runner in CI"
     fi
+    if cmp -s "$REPO_ROOT/.githooks/privacy-comment-scan.py" "$REPO_ROOT/templates/privacy-comment-alert/privacy-comment-scan.py"; then
+        pass "self agent-checks: .githooks/privacy-comment-scan.py matches its template"
+    else
+        fail "self agent-checks: .githooks/privacy-comment-scan.py matches its template — copy the template over it"
+    fi
     if grep -qF 'templates/agent-checks/agent-checks-guard.sh' "$REPO_ROOT/.claude/settings.json"; then
         pass "self agent-checks: the guard is registered from the template"
     else
         fail "self agent-checks: the guard is registered from the template"
     fi
+}
+
+# The privacy-comment-alert workflow template (issue 636): its parsed shape,
+# and the scan script on fixture event files. Patterns are invented.
+test_privacy_comment_alert() {
+    echo ""
+    echo "=== Test: privacy-comment-alert workflow shape and scan script ==="
+    local tmpl="$REPO_ROOT/templates/privacy-comment-alert" own="$REPO_ROOT/.github/workflows/privacy-comment-alert.yml"
+    local wf got want d="$TEST_DIR/pca" scan ev out rc
+    rm -rf "$d"; mkdir -p "$d"
+    scan="$tmpl/privacy-comment-scan.py"
+
+    for wf in "$tmpl/privacy-comment-alert.yml" "$own"; do
+        local label="${wf#"$REPO_ROOT"/}"
+        got=$(yq -r '.on | to_entries | .[] | .key + ":" + (.value.types | join(","))' "$wf" | tr '\n' ' ')
+        want="issue_comment:created,edited issues:opened,edited pull_request_review_comment:created,edited pull_request_review:submitted,edited "
+        if [[ "$got" == "$want" ]]; then
+            pass "privacy-comment-alert: $label triggers on the four comment events"
+        else
+            fail "privacy-comment-alert: $label triggers on the four comment events — got: $got"
+        fi
+        got=$(yq -o=json -I=0 '.permissions' "$wf")
+        if [[ "$got" == '{"contents":"read"}' ]]; then
+            pass "privacy-comment-alert: $label asks for contents: read and nothing more"
+        else
+            fail "privacy-comment-alert: $label asks for contents: read and nothing more — got: $got"
+        fi
+        got=$(yq -r '.jobs | to_entries | .[] | .value.steps[] | select(.uses != null and (.uses | test("checkout"))) | .with."persist-credentials"' "$wf")
+        if [[ "$got" == "false" ]]; then
+            pass "privacy-comment-alert: $label checks out without persisting credentials"
+        else
+            fail "privacy-comment-alert: $label checks out without persisting credentials — got: $got"
+        fi
+        # No step interpolates an event field into a shell script.
+        got=$(yq -r '.jobs[].steps[] | select(.run != null) | .run' "$wf" | grep -c 'github\.event' || true)
+        if [[ "$got" == "0" ]]; then
+            pass "privacy-comment-alert: $label never interpolates event data into a run: block"
+        else
+            fail "privacy-comment-alert: $label never interpolates event data into a run: block"
+        fi
+    done
+    got=$(yq -r '.jobs[].steps[] | select(.uses != null) | .uses' "$tmpl/privacy-comment-alert.yml" | grep -cvE '@[0-9a-f]{40}$' || true)
+    if [[ "$got" == "0" ]]; then
+        pass "privacy-comment-alert: the template pins every action to a full commit SHA"
+    else
+        fail "privacy-comment-alert: the template pins every action to a full commit SHA"
+    fi
+    got=$(yq -r '.on | has("pull_request") or has("push")' "$tmpl/privacy-comment-alert.yml")
+    if [[ "$got" == "false" ]]; then
+        pass "privacy-comment-alert: the template has no pull_request or push trigger (so it cannot be a required check)"
+    else
+        fail "privacy-comment-alert: the template has no pull_request or push trigger"
+    fi
+
+    # The scan script, template layout (privacy-denylist.py is found in
+    # templates/agent-checks) and delivered layout (beside it in .githooks).
+    run_scan() {   # <script> <event name> <event json> [PRIVACY_DENYLIST]; sets out, rc
+        printf '%s' "$3" > "$d/event.json"
+        rc=0
+        out=$(env -i PATH="$PATH" GITHUB_EVENT_NAME="$2" GITHUB_EVENT_PATH="$d/event.json" \
+              ${4+PRIVACY_DENYLIST="$4"} python3 -I "$1" 2> "$d/err") || rc=$?
+    }
+    local pat=$'# a comment\nzebra-canary\n\nnever-(zzz)-matches'
+    local s
+    for s in "$scan" "$REPO_ROOT/.githooks/privacy-comment-scan.py"; do
+        local sl="${s#"$REPO_ROOT"/}"
+        run_scan "$s" issue_comment '{"comment":{"body":"see the Zebra-Canary notes"}}' "$pat"
+        if [[ $rc -eq 0 && "$out" == "match" ]]; then pass "privacy-comment-alert: $sl prints match for a denylisted comment (any case)"; else fail "privacy-comment-alert: $sl prints match for a denylisted comment — got '$out' rc $rc"; fi
+        run_scan "$s" issue_comment '{"comment":{"body":"nothing here"}}' "$pat"
+        if [[ "$out" == "clean" ]]; then pass "privacy-comment-alert: $sl prints clean for a clean comment"; else fail "privacy-comment-alert: $sl prints clean — got '$out'"; fi
+        run_scan "$s" issue_comment '{"comment":{"body":"zebra-canary"}}'
+        if [[ "$out" == "no-denylist" ]]; then pass "privacy-comment-alert: $sl prints no-denylist when PRIVACY_DENYLIST is unset"; else fail "privacy-comment-alert: $sl prints no-denylist when unset — got '$out'"; fi
+        run_scan "$s" issue_comment '{"comment":{"body":"zebra-canary"}}' $'# only a comment\n\n'
+        if [[ "$out" == "no-denylist" ]]; then pass "privacy-comment-alert: $sl prints no-denylist when the denylist holds no pattern"; else fail "privacy-comment-alert: $sl prints no-denylist for an empty list — got '$out'"; fi
+        run_scan "$s" issues '{"issue":{"title":"zebra-canary","body":null}}' "$pat"
+        if [[ "$out" == "match" ]]; then pass "privacy-comment-alert: $sl scans an issue's title"; else fail "privacy-comment-alert: $sl scans an issue's title — got '$out'"; fi
+        run_scan "$s" issues '{"issue":{"title":"t","body":"zebra-canary"}}' "$pat"
+        if [[ "$out" == "match" ]]; then pass "privacy-comment-alert: $sl scans an issue's body"; else fail "privacy-comment-alert: $sl scans an issue's body — got '$out'"; fi
+        run_scan "$s" issue_comment '{"comment":{"body":"fine"},"issue":{"title":"zebra-canary","body":"zebra-canary"}}' "$pat"
+        if [[ "$out" == "clean" ]]; then pass "privacy-comment-alert: $sl leaves the parent issue's text to the issues event"; else fail "privacy-comment-alert: $sl leaves the parent issue's text to the issues event — got '$out'"; fi
+        run_scan "$s" pull_request_review '{"review":{"body":"zebra-canary"}}' "$pat"
+        if [[ "$out" == "match" ]]; then pass "privacy-comment-alert: $sl scans a review body"; else fail "privacy-comment-alert: $sl scans a review body — got '$out'"; fi
+        run_scan "$s" pull_request_review '{"review":{"body":null}}' "$pat"
+        if [[ "$out" == "clean" ]]; then pass "privacy-comment-alert: $sl reads an empty review body as clean"; else fail "privacy-comment-alert: $sl reads an empty review body as clean — got '$out'"; fi
+        run_scan "$s" pull_request_review_comment '{"comment":{"body":"zebra-canary"}}' "$pat"
+        if [[ "$out" == "match" ]]; then pass "privacy-comment-alert: $sl scans a review comment"; else fail "privacy-comment-alert: $sl scans a review comment — got '$out'"; fi
+        run_scan "$s" push '{"comment":{"body":"zebra-canary"}}' "$pat"
+        if [[ "$out" == "error" ]]; then pass "privacy-comment-alert: $sl prints error for an event it does not scan"; else fail "privacy-comment-alert: $sl prints error for an unscanned event — got '$out'"; fi
+        run_scan "$s" issue_comment 'not json' "$pat"
+        if [[ "$out" == "error" ]]; then pass "privacy-comment-alert: $sl prints error for an unreadable event file"; else fail "privacy-comment-alert: $sl prints error for an unreadable event file — got '$out'"; fi
+        run_scan "$s" issue_comment '{"comment":{"body":"x"}}' $'(unclosed'
+        if [[ "$out" == "error" ]] && ! grep -q 'unclosed' "$d/err"; then pass "privacy-comment-alert: $sl prints error for an invalid pattern, without quoting it"; else fail "privacy-comment-alert: $sl prints error for an invalid pattern without quoting it — got '$out'"; fi
+        run_scan "$s" issue_comment '{"comment":{"body":"the zebra-canary and more text"}}' "$pat"
+        if [[ "$out" != *zebra* && "$out" != *canary* && "$(cat "$d/err")" != *zebra* && "$out" != *"#"* ]]; then pass "privacy-comment-alert: $sl never prints the text, the pattern or a number"; else fail "privacy-comment-alert: $sl never prints the text, the pattern or a number"; fi
+    done
+
+    # The fallback loader (no privacy-denylist.py anywhere near the script).
+    cp "$scan" "$d/lone-scan.py"
+    run_scan "$d/lone-scan.py" issue_comment '{"comment":{"body":"a ZEBRA-canary"}}' "$pat"
+    if [[ "$out" == "match" ]]; then pass "privacy-comment-alert: the fallback loader matches case-insensitively without privacy-denylist.py"; else fail "privacy-comment-alert: the fallback loader matches — got '$out'"; fi
+    run_scan "$d/lone-scan.py" issue_comment '{"comment":{"body":"nothing"}}' "$pat"
+    if [[ "$out" == "clean" ]]; then pass "privacy-comment-alert: the fallback loader reads clean"; else fail "privacy-comment-alert: the fallback loader reads clean — got '$out'"; fi
 }
 
 # The lesson-check lane (ADR 0027): the case table holds against the template
@@ -29441,6 +29588,7 @@ GROUP_agent_checks=(
     test_agent_checks_dated_phrasing
     test_agent_checks_dated_phrasing_lock
     test_self_agent_checks
+    test_privacy_comment_alert
     test_sync_agent_checks
     test_agent_check_lane_cases
     test_agent_check_lane_module

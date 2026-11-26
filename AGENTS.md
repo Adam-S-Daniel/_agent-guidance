@@ -162,6 +162,7 @@ not run on a change, so they have no path filter. The required contexts on
 | --- | --- | --- | --- |
 | `ci.yml` | `pull_request`, push to `main` | Broad trigger; each `suite` shard and `checks` decide from `scripts/ci-scope.sh` and the job still reports success | `test` (aggregator) |
 | `agent-checks.yml` | `pull_request`, push to `main` | None: a required check cannot use `on.paths`, and the runner itself passes when nothing it checks changed | `agent-checks` |
+| `privacy-comment-alert.yml` | `issue_comment`, `issues`, `pull_request_review_comment`, `pull_request_review` (created, opened, submitted or edited) | Not applicable: it runs on comment events, not on pull request code | No: it can never report on a PR's head, so a required context would block every merge |
 | `health-reusable-parity.yml` | `pull_request` with `paths:` (`scheduled-run-health-reusable.yml`, itself, `scripts/check-health-reusable-parity.js`), daily schedule | `on.paths` | No: with `on.paths` it would be missing, not skipped, on every other PR and block the merge |
 | `sync.yml` | push to `main` with `paths:` (the sync inputs and `templates/**`) | `on.paths` | No: post-merge, not a PR check |
 | `vendor-discrepancy-alert.yml` | push to `main` with `paths:` (the vendor discrepancy and draft files) | `on.paths` | No: post-merge |
