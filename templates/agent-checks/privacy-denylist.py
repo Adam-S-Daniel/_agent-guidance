@@ -48,6 +48,7 @@ Output, on a match (stdout):
     <sha12>:identity:<line>: pattern #N      (1 author name, 2 author email,
                                               3 committer name, 4 committer email)
     <path>:<line>: pattern #N                (a line added by --diff)
+    <path withheld>: pattern #N              (an added or renamed path matches)
     PR title:1: pattern #N                   (--event-path)
     PR body:<line>: pattern #N
 
@@ -193,12 +194,11 @@ def _git_ok(repo: Path, *args: str) -> bool:
     return proc.returncode == 0
 
 
-def _diff_text(repo: Path, base: str, head: str) -> bytes:
-    """`git diff -U0` of what BASE..HEAD adds. A BASE this clone does not have
-    (empty, all zeros, a force-pushed-away commit) falls back to HEAD against
-    its parent, or the empty tree for a root commit."""
-    flags = ["-c", "core.quotepath=false", "diff", "--no-color", "--no-ext-diff",
-             "--no-renames", "-U0"]
+def _diff_start(repo: Path, base: str, head: str) -> str:
+    """The commit (or empty tree) the range's added lines are read against. A
+    BASE this clone does not have (empty, all zeros, a force-pushed-away
+    commit) falls back to HEAD against its parent, or the empty tree for a root
+    commit."""
     if not _SHA_RE.match(head) and head != "HEAD" and not head.startswith("refs/"):
         raise CheckError("the diff head is not a commit")
     if base and not _ZERO_RE.match(base) and _SHA_RE.match(base) \
@@ -214,7 +214,33 @@ def _diff_text(repo: Path, base: str, head: str) -> bytes:
         start = f"{head}^"
     else:
         start = _git(repo, "hash-object", "-t", "tree", "/dev/null").decode().strip()
-    return _git(repo, *flags, start, head, "--")
+    return start
+
+
+# -M on purpose: a pure rename of an old file adds no lines, so it must not
+# re-flag the file's existing content; a rename with edits reports only the
+# edited (added) lines.
+_DIFF_FLAGS = ["-c", "core.quotepath=false", "diff", "--no-color", "--no-ext-diff", "-M"]
+
+
+def _diff_text(repo: Path, base: str, head: str) -> bytes:
+    """`git diff -U0` of what BASE..HEAD adds."""
+    return _git(repo, *_DIFF_FLAGS, "-U0", _diff_start(repo, base, head), head, "--")
+
+
+def _added_paths(repo: Path, base: str, head: str) -> List[str]:
+    """Paths the range adds or renames to, empty and binary files included
+    (they have no added lines for the line scan to read)."""
+    raw = _git(repo, *_DIFF_FLAGS, "--name-status", "-z", "--diff-filter=ACR",
+               _diff_start(repo, base, head), head, "--")
+    fields = raw.decode("utf-8", "replace").split("\0")
+    paths: List[str] = []
+    i = 0
+    while i < len(fields) and fields[i]:
+        width = 3 if fields[i][0] in "RC" else 2  # status, [old path,] new path
+        paths.append(fields[i + width - 1] if i + width - 1 < len(fields) else "")
+        i += width
+    return paths
 
 
 def scan_diff(repo: Path, base: str, head: str,
@@ -225,6 +251,12 @@ def scan_diff(repo: Path, base: str, head: str,
     happens to read `+++ b/x` is content, not a file header. A path that
     itself holds a denylisted term is shown as `<path withheld>`."""
     found: List[Match] = []
+    # A path is public the moment it is pushed: a matching one is a finding of
+    # its own, and its text is never printed.
+    for added in _added_paths(repo, base, head):
+        for index, pattern in enumerate(patterns, start=1):
+            if pattern.search(added):
+                found.append(("<path withheld>", index))
     path: Optional[str] = None
     old_left = new_left = new_no = 0
     for raw in _diff_text(repo, base, head).split(b"\n"):
@@ -232,8 +264,9 @@ def scan_diff(repo: Path, base: str, head: str,
         if old_left > 0 or new_left > 0:
             if line.startswith("+"):
                 new_left -= 1
+                text = line[1:].rstrip("\r")  # CRLF files: `$` must still anchor
                 for index, pattern in enumerate(patterns, start=1):
-                    if pattern.search(line[1:]):
+                    if pattern.search(text):
                         found.append((f"{_shown(path, patterns)}:{new_no}", index))
                 new_no += 1
             elif line.startswith("-"):

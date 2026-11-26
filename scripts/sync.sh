@@ -686,6 +686,14 @@ AC_SECRET_STEP='.jobs[].steps[] | select(.run != null and (.run | test("\\.githo
 ac_secret_status() {
     local wf="$1" got
     got=$(yq "[$AC_SECRET_STEP] | length" "$wf" 2>/dev/null) || { echo "skipped: yq could not parse it"; return 0; }
+    if [[ "$got" == 0 ]]; then
+        # A thin caller (a job with `uses:` and no steps) runs the runner in the
+        # reusable workflow it calls, which owns the secret; there is no step
+        # here to patch, and a comment naming the runner is not one.
+        got=$(yq '[.jobs[] | select(.uses != null and .steps == null)] | length' "$wf" 2>/dev/null) || got=""
+        if [[ -n "$got" && "$got" != 0 ]]; then echo "n/a"; return 0; fi
+        got=0
+    fi
     [[ "$got" == 1 ]] || { echo "skipped: it has no single step running .githooks/agent-checks ci"; return 0; }
     got=$(yq "$AC_SECRET_STEP | .env | type" "$wf" 2>/dev/null) || got=""
     case "$got" in
@@ -1778,7 +1786,7 @@ for repo_name in "${REPOS[@]}"; do
             log "WARN: $repo_name locks its actions in .github/workflows/actions.lock — the privacy-comment-alert workflow is not delivered (its uses: lines must be tags locked by gh actions-lock, which the sync cannot run). Add it by hand."
         elif [[ -e platform.lock ]]; then
             pca_wf_state="skipped"
-            log "privacy-comment-alert: $repo_name is a cms-platform consumer (platform.lock) — the workflow is not delivered; the platform carries it instead."
+            log "privacy-comment-alert: $repo_name is a cms-platform consumer (platform.lock) — the workflow is not delivered, and cms-platform does not carry it yet."
         elif git check-ignore -q "$PCA_WF_REL_PATH" 2>/dev/null; then
             pca_wf_state="skipped"
             log "WARN: $PCA_WF_REL_PATH is gitignored in $repo_name — not delivered."

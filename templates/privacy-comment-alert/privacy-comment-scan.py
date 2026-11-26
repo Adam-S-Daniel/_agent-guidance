@@ -5,6 +5,7 @@ The privacy-comment-alert workflow runs this on an issue or comment event. It
 reads the event payload from $GITHUB_EVENT_PATH, scans the text the event
 carries against the denylist, and prints exactly ONE word:
 
+  skipped       the text's author is not trusted (see below); nothing was scanned
   match         a pattern matched the text
   clean         nothing matched
   no-denylist   PRIVACY_DENYLIST is unset or holds no pattern (a new repo)
@@ -15,6 +16,14 @@ Nothing else reaches stdout: not the text, not the pattern, not its number, not
 even a count. The workflow's log is public on a public repo, so the answer has
 to be as small as the log can safely hold. The exit status is 0 for all four
 words; the workflow reads the word.
+
+Only text written by a TRUSTED author is scanned: the author_association on the
+event's comment, issue or review is OWNER, MEMBER or COLLABORATOR, or its user
+is a Bot. On a public repo anyone can open an issue, and a log that said
+"match" or "clean" for their text would let them test guesses against the
+denylist. The threat this covers is the owner's own agents posting a term; an
+outsider can post anything anyway. The workflow also keeps its log and step
+graph identical for match and clean, so the word is never visible to anyone.
 
 What is scanned, by event (GITHUB_EVENT_NAME):
 
@@ -81,6 +90,27 @@ def _load_patterns(environ):
     return _fallback_load_patterns(environ)
 
 
+TRUSTED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
+AUTHOR_NODE = {
+    "issues": "issue",
+    "issue_comment": "comment",
+    "pull_request_review_comment": "comment",
+    "pull_request_review": "review",
+}
+
+
+def _trusted(event_name, event):
+    """True when the text's author is the owner's side: a member-ish
+    association, or a Bot account. A missing field is not trusted."""
+    node = event.get(AUTHOR_NODE.get(event_name, ""))
+    if not isinstance(node, dict):
+        return False
+    if node.get("author_association") in TRUSTED_ASSOCIATIONS:
+        return True
+    user = node.get("user")
+    return isinstance(user, dict) and user.get("type") == "Bot"
+
+
 def _texts(event_name, event):
     paths = FIELDS.get(event_name)
     if paths is None:
@@ -102,9 +132,16 @@ def scan(environ):
         raise ValueError("no event path")
     with open(path, encoding="utf-8") as handle:
         event = json.load(handle)
-    for text in _texts(environ.get("GITHUB_EVENT_NAME", ""), event):
-        if any(pattern.search(text) for pattern in patterns):
-            return "match"
+    event_name = environ.get("GITHUB_EVENT_NAME", "")
+    texts = list(_texts(event_name, event))  # an unsupported event is an error
+    if not _trusted(event_name, event):
+        return "skipped"
+    for text in texts:
+        # Line by line, like privacy-denylist.py, so `^term$` means the same here.
+        for line in text.splitlines():
+            line = line.rstrip("\r")
+            if any(pattern.search(line) for pattern in patterns):
+                return "match"
     return "clean"
 
 

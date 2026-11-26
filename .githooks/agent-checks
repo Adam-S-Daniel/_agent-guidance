@@ -330,8 +330,8 @@ check_local_identity() {
 #   enforce  (the default) a match, or a checker that could not run, refuses;
 #   warn     the escape hatch: every such outcome is a ::warning:: line and the
 #            job still passes. Set AGENT_CHECKS_PRIVACY_CI=warn to use it.
-# A MISSING secret (or one with no pattern) only ever warns and skips the scan,
-# in both modes: the runner is also synced to repos outside the managed fleet
+# A MISSING secret (or one with no pattern), python3 or privacy-denylist.py only
+# ever warns and skips the scan, in both modes: the runner is also synced to repos outside the managed fleet
 # and copied to adopters with no denylist, where failing closed would turn every
 # pull request red. Outside Actions the scan runs only when a denylist file
 # exists, and says nothing otherwise.
@@ -440,7 +440,10 @@ run_privacy_ci() {
   fi
   note_ran privacy
   if ! command -v python3 > /dev/null 2>&1 || [ ! -f "$privacy_script" ]; then
-    privacy_ci_finding "the privacy denylist could not be checked: python3 (or $privacy_script) is not available, so this change was not scanned. Install Python 3 (every GitHub-hosted runner has it) and re-run."
+    # A warning in both modes, like a missing secret: the sync can skip
+    # privacy-denylist.py (a gitignored dated-phrasing file), and an absent
+    # checker is not a finding. A checker that RAN and errored still refuses.
+    privacy_warn "the privacy denylist was not checked: python3 (or $privacy_script) is not available, so this change was not scanned. Install Python 3 (every GitHub-hosted runner has it) and make sure the sync delivered privacy-denylist.py."
     return 0
   fi
   if known_commit "$base"; then
