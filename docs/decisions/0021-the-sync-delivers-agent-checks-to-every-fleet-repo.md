@@ -179,3 +179,19 @@ The runner is delivered to every repo, but a cloud session never ran it as a git
 - **Opt-out.** `FLEET_GIT_HOOKS=off` skips it. The test suite sets it, so a cloud container running the suite does not edit its own git config.
 - **The include text is copied, not read.** adam-agentskills is not available in CI, so `test_fleet_memory_git_hooks` embeds the expected text with a comment naming its source. If the installer's output changes, change both.
 - **Their runs are uploaded.** With the hooks running, the cloud runs reach the private usage store as phase 3 of `guidance-load-record.sh` (ADR 0036, ADR 0037 addenda).
+
+## Addendum (2026-11-26): the CI privacy scan
+
+The pre-push `privacy` check (a denylist file, `~/.config/privacy-denylist.txt`) only protects a machine that has the file. The runner's `ci` event now runs the same checker, `.githooks/privacy-denylist.py`, over the whole change, so the `agent-checks` context every fleet repo already requires also refuses a denylisted term in:
+
+- a line the range adds (`--diff BASE HEAD`; binary files are skipped, and a base the clone does not have scans the head commit's own diff, as the lint pass falls back);
+- each commit's message and author and committer identity (`--commits-stdin`);
+- the branch name (`GITHUB_HEAD_REF`, `--ref`);
+- the pull request's title and body, read by the checker from `GITHUB_EVENT_PATH` (`--event-path`), never interpolated into shell.
+
+The denylist is the `PRIVACY_DENYLIST` repository secret. A secret reaches a step only through its `env:`, so the delivered workflow's runner step passes `PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}`, and the sync patches an existing copy the same narrow way it adds `edited` (the shape read with yq, a lexical edit, yq proving only that key was added, else the file is restored and a WARN says to add the line by hand). Output follows the checker's rule: `path:line: pattern #N`, the place and pattern number only, never the matched text or a pattern; a path that itself holds a denylisted term is shown as `<path withheld>`.
+
+- **Enforced by default.** A match, or a checker that could not run (an invalid pattern, an unreadable event file, git failing, no python3), fails the job. Enforcement was switched on once repo-settings#231 showed the secret in every managed repo. `AGENT_CHECKS_PRIVACY_CI=warn` in the job's environment is the escape hatch: every outcome becomes a `::warning title=privacy::` line and the job passes.
+- **A missing secret warns and skips, in both modes, for every author.** It does not fail closed. The runner is also synced to repos outside repo-settings' `fleet.yml` (dormant scratch repos) and copied by the acsi-kit to outside adopters who have no denylist, and failing closed would turn all of their pull requests red. A pull request from a fork, and a Dependabot one, gets no secrets, so it skips for the same reason. A managed repo that loses the secret is caught by repo-settings' drift report, not by a red build here. A secret that holds only comments or blank lines counts as missing.
+- **Outside Actions** the scan runs only when a denylist file exists and says nothing otherwise.
+- **Scope.** Public and private repos alike (a private repo can be made public later). Only the range is scanned, so old history does not turn a repo red; a full-history audit is a separate, local task.
