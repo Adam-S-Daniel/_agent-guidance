@@ -72,6 +72,7 @@ jobs:
           SELF_ALERT_APP_ID: ${{ vars.SELF_ALERT_APP_ID }}
           SELF_ALERT_REPO: ${{ vars.SELF_ALERT_REPO }}
           SELF_ALERT_APP_PRIVATE_KEY: ${{ secrets.SELF_ALERT_APP_PRIVATE_KEY }}
+          SCANNED: ${{ steps.scan.outputs.scanned }}
         run: |
           if [[ -n "$SELF_ALERT_APP_ID" && -n "$SELF_ALERT_APP_PRIVATE_KEY" \
                 && "$SELF_ALERT_REPO" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]]; then
@@ -80,7 +81,9 @@ jobs:
               echo "owner=${SELF_ALERT_REPO%%/*}"
               echo "name=${SELF_ALERT_REPO#*/}"
             } >> "$GITHUB_OUTPUT"
-          else
+          elif [[ "$SCANNED" == true ]]; then
+            # Only when text was scanned (a trusted author), which does not
+            # depend on what the text holds, so the warning reveals nothing.
             echo "::warning::No self-alert route is configured here, so a denylisted term would not be alerted."
           fi
       - name: Mint a token for the alert repository
