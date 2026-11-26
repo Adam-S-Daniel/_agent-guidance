@@ -116,6 +116,13 @@ AC_GUARD_MATCHER="Bash|Edit|Write|MultiEdit|NotebookEdit"
 AC_DATED_FILES=(dated-phrasing.js dated-phrasing-allowlist.txt
                 dated-phrasing/package.json dated-phrasing/package-lock.json
                 privacy-denylist.py)
+# ── privacy-comment-alert lane (issue #636) ──
+# Rides the agent_checks.deliver switch. The scan script is MANAGED under
+# .githooks/ (beside privacy-denylist.py, which it imports); the workflow is
+# ADDED once and never overwritten, like agent-checks.yml.
+PCA_TEMPLATE_DIR="$REPO_ROOT/templates/privacy-comment-alert"
+PCA_SCAN_REL_PATH=".githooks/privacy-comment-scan.py"
+PCA_WF_REL_PATH=".github/workflows/privacy-comment-alert.yml"
 # The runner is run by bash from git hooks, so a CRLF checkout breaks it the
 # same way it breaks the .claude/hooks scripts (ADR 0019): a second managed line.
 AC_EOL_LINE='.githooks/* text eol=lf'
@@ -529,6 +536,16 @@ if [[ "$(read_repos_yml '.agent_checks.deliver // false')" == "true" ]]; then
     fi
 fi
 
+# ── privacy-comment-alert delivery (rides agent_checks.deliver) ──────────────
+PCA_ENABLED=false
+if $AGENT_CHECKS_ENABLED; then
+    PCA_ENABLED=true
+    for pca_template in privacy-comment-scan.py privacy-comment-alert.yml; do
+        [[ -s "$PCA_TEMPLATE_DIR/$pca_template" ]] || PCA_ENABLED=false
+    done
+    $PCA_ENABLED || echo "::warning::$PCA_TEMPLATE_DIR is missing a template — not delivering the privacy-comment-alert lane this run." >&2
+fi
+
 # ── agent-checks workflow trigger (ADR 0021, 2026-11-02 addendum) ──────────
 # The workflow is added once and never overwritten, so a repo that received it
 # before the runner's pr-tldr check has a bare `pull_request:` trigger, and an
@@ -649,6 +666,124 @@ ac_trigger_patch() {
     else
         cp "$backup" "$wf"; rm -f "$backup"
         echo "skipped: after the edit yq did not read the same workflow with edited added, so the file was restored"
+    fi
+}
+
+# ── agent-checks: the PRIVACY_DENYLIST secret in the delivered workflow ──────
+# The runner's ci-mode privacy scan (templates/agent-checks/agent-checks) reads
+# the PRIVACY_DENYLIST secret from its environment, and a secret reaches a step
+# only through that step's env:. The workflow is delivered once and never
+# overwritten, so an existing copy needs the one line added. Same approach as the
+# trigger patch: the shape is read with yq, the edit is lexical (an `env:` block
+# gets a line, or a step with none gets a two-line one, right before its `run:`),
+# and yq then proves nothing but that key was added, or the bytes are restored.
+
+AC_SECRET_LINE='PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}'
+AC_SECRET_STEP='.jobs[].steps[] | select(.run != null and (.run | test("\\.githooks/agent-checks ci")))'
+
+# ac_secret_status <workflow> — prints current, missing-secret, or
+# "skipped: <why>" for a shape this lane does not edit.
+ac_secret_status() {
+    local wf="$1" got
+    got=$(yq "[$AC_SECRET_STEP] | length" "$wf" 2>/dev/null) || { echo "skipped: yq could not parse it"; return 0; }
+    if [[ "$got" == 0 ]]; then
+        # A thin caller (a job with `uses:` and no steps) runs the runner in the
+        # reusable workflow it calls, which owns the secret; there is no step
+        # here to patch, and a comment naming the runner is not one.
+        got=$(yq '[.jobs[] | select(.uses != null and .steps == null)] | length' "$wf" 2>/dev/null) || got=""
+        if [[ -n "$got" && "$got" != 0 ]]; then echo "n/a"; return 0; fi
+        got=0
+    fi
+    [[ "$got" == 1 ]] || { echo "skipped: it has no single step running .githooks/agent-checks ci"; return 0; }
+    got=$(yq "$AC_SECRET_STEP | .env | type" "$wf" 2>/dev/null) || got=""
+    case "$got" in
+        '!!null'|'!!map') ;;
+        *) echo "skipped: that step's env is not a map"; return 0 ;;
+    esac
+    got=$(yq "$AC_SECRET_STEP | .env | has(\"PRIVACY_DENYLIST\")" "$wf" 2>/dev/null) || got=""
+    case "$got" in
+        true) echo current ;;
+        false) echo missing-secret ;;
+        *) echo "skipped: yq could not read that step's env" ;;
+    esac
+}
+
+# The lexical edit ac_secret_patch makes, run by python3 with the workflow and
+# the line to add. The step's `run:` line must be a key of its own (not
+# `- run:`), found once. With an `env:` block (not an inline map) the line goes
+# first in it, at the block's indent; with none, `env:` and the line go
+# right before `run:`. Anything else prints why and exits 1, writing nothing.
+AC_SECRET_EDIT_PY=""
+IFS= read -r -d '' AC_SECRET_EDIT_PY <<'EDIT_PY' || true
+import re
+import sys
+
+path, entry = sys.argv[1], sys.argv[2]
+
+
+def stop(why):
+    print(why)
+    sys.exit(1)
+
+
+with open(path, "rb") as fh:
+    lines = fh.read().decode("utf-8").splitlines(keepends=True)
+runs = [i for i, line in enumerate(lines)
+        if re.match(r"[ ]+run:[ \t]+.*\.githooks/agent-checks ci(\s|$)", line)]
+if len(runs) != 1:
+    stop("it has no single `run:` line of its own running .githooks/agent-checks ci")
+at = runs[0]
+indent = re.match(r"[ ]*", lines[at]).group(0)
+eol = "\r\n" if lines[at].endswith("\r\n") else "\n"
+lo = at
+while lo > 0 and (not lines[lo - 1].strip() or lines[lo - 1].startswith(indent)
+                  or lines[lo - 1].lstrip().startswith("#")):
+    lo -= 1
+hi = at + 1
+while hi < len(lines) and (not lines[hi].strip() or lines[hi].startswith(indent)
+                           or lines[hi].lstrip().startswith("#")):
+    hi += 1
+envs = [i for i in range(lo, hi) if re.fullmatch(re.escape(indent) + r"env:[ \t]*(#.*)?\r?\n?", lines[i])]
+if len(envs) > 1:
+    stop("that step has more than one env: line")
+if envs:
+    nxt = envs[0] + 1
+    child = re.match(r"([ ]+)\S", lines[nxt]) if nxt < len(lines) else None
+    if not child or len(child.group(1)) <= len(indent):
+        stop("its env: block is not a plain block map")
+    if not lines[envs[0]].endswith("\n"):
+        lines[envs[0]] += eol
+    lines.insert(envs[0] + 1, child.group(1) + entry + eol)
+else:
+    if any(re.match(re.escape(indent) + r"env:", lines[i]) for i in range(lo, hi)):
+        stop("that step's env: is not a block it can add to")
+    lines[at:at] = [indent + "env:" + eol, indent + "  " + entry + eol]
+with open(path, "wb") as fh:
+    fh.write("".join(lines).encode("utf-8"))
+EDIT_PY
+
+# ac_secret_patch <workflow> — add the PRIVACY_DENYLIST env line to a workflow
+# ac_secret_status called missing-secret. Prints "patched", or "skipped: <why>"
+# with the file's original bytes put back.
+ac_secret_patch() {
+    local wf="$1" backup why before after got
+    local norm='del(.jobs[].steps[].env.PRIVACY_DENYLIST) | del(.jobs[].steps[] | select(has("env") and (.env | length) == 0) | .env)'
+    backup=$(mktemp -p "$WORK_DIR") || { echo "skipped: could not create a temp file"; return 0; }
+    cp "$wf" "$backup"
+    before=$(yq -o=json -I0 "$norm" "$wf" 2>/dev/null) || before=""
+    if ! why=$(python3 -c "$AC_SECRET_EDIT_PY" "$wf" "$AC_SECRET_LINE" 2>&1); then
+        cp "$backup" "$wf"; rm -f "$backup"
+        echo "skipped: ${why:-the edit failed}"
+        return 0
+    fi
+    after=$(yq -o=json -I0 "$norm" "$wf" 2>/dev/null) || after=""
+    got=$(yq "$AC_SECRET_STEP | .env.PRIVACY_DENYLIST" "$wf" 2>/dev/null) || got=""
+    if [[ -n "$before" && "$before" == "$after" && "$got" == '${{ secrets.PRIVACY_DENYLIST }}' ]]; then
+        rm -f "$backup"
+        echo patched
+    else
+        cp "$backup" "$wf"; rm -f "$backup"
+        echo "skipped: after the edit yq did not read the same workflow with the secret added, so the file was restored"
     fi
 }
 
@@ -1525,9 +1660,11 @@ for repo_name in "${REPOS[@]}"; do
     #   eol       the `.githooks/* text eol=lf` line in .gitattributes.
     #   trigger   an existing agent-checks.yml's pull_request types:
     #             current | missing-edited | skipped (a shape not edited) | n/a
+    #   secret    the PRIVACY_DENYLIST line in that workflow's runner step env:
+    #             current | missing-secret | skipped (a shape not edited) | n/a
     ac_runner_state="n/a"; ac_dated_state="n/a"; ac_wf_state="n/a"; ac_guard_state="n/a"
     ac_reg_state="n/a"; ac_eol_state="n/a"; ac_guard_deliver=false
-    ac_trigger_state="n/a"
+    ac_trigger_state="n/a"; ac_secret_state="n/a"
     if $AGENT_CHECKS_ENABLED; then
         if git check-ignore -q "$AC_RUNNER_REL_PATH" 2>/dev/null; then
             ac_runner_state="skipped"
@@ -1604,18 +1741,63 @@ for repo_name in "${REPOS[@]}"; do
                 log "WARN: $repo_name's $AC_WF_REL_PATH is not patched to re-run on a description edit (${ac_trigger_state#skipped: }) — add edited to its pull_request types by hand."
                 ac_trigger_state="skipped"
             fi
+            # The same file's runner step must pass the PRIVACY_DENYLIST secret
+            # (see ac_secret_status), or the CI privacy scan cannot read it.
+            ac_secret_state=$(ac_secret_status "$AC_WF_REL_PATH")
+            if [[ "$ac_secret_state" == skipped:* ]]; then
+                log "WARN: $repo_name's $AC_WF_REL_PATH is not patched to pass the privacy denylist secret (${ac_secret_state#skipped: }) — add $AC_SECRET_LINE to the env of the step that runs the runner by hand."
+                ac_secret_state="skipped"
+            fi
         fi
-        log "agent-checks: runner=$ac_runner_state dated=$ac_dated_state workflow=$ac_wf_state trigger=$ac_trigger_state guard=$ac_guard_state settings=$ac_reg_state eol=$ac_eol_state"
+        log "agent-checks: runner=$ac_runner_state dated=$ac_dated_state workflow=$ac_wf_state trigger=$ac_trigger_state guard=$ac_guard_state settings=$ac_reg_state eol=$ac_eol_state secret=$ac_secret_state"
     fi
     ac_up_to_date=true
     if [[ "$ac_runner_state" == "missing" || "$ac_runner_state" == "drifted" \
           || "$ac_dated_state" == "missing" || "$ac_dated_state" == "drifted" \
           || "$ac_wf_state" == "missing" || "$ac_eol_state" == "missing" \
-          || "$ac_trigger_state" == "missing-edited" ]]; then
+          || "$ac_trigger_state" == "missing-edited" || "$ac_secret_state" == "missing-secret" ]]; then
         ac_up_to_date=false
     fi
     if $ac_guard_deliver && { [[ "$ac_guard_state" != "current" ]] || [[ "$ac_reg_state" != "registered" ]]; }; then
         ac_up_to_date=false
+    fi
+
+    # ── privacy-comment-alert: classify ────────────────────────────────
+    #   scan      missing | current | drifted | skipped (gitignored)
+    #   workflow  missing | present | skipped (actions.lock, platform.lock, gitignored)
+    pca_scan_state="n/a"; pca_wf_state="n/a"
+    if $PCA_ENABLED; then
+        if git check-ignore -q "$PCA_SCAN_REL_PATH" 2>/dev/null; then
+            pca_scan_state="skipped"
+            log "WARN: $PCA_SCAN_REL_PATH is gitignored in $repo_name — the privacy-comment-alert scan script is not delivered."
+        elif [[ ! -f "$PCA_SCAN_REL_PATH" ]]; then
+            pca_scan_state="missing"
+        elif cmp -s "$PCA_SCAN_REL_PATH" "$PCA_TEMPLATE_DIR/privacy-comment-scan.py"; then
+            pca_scan_state="current"
+        else
+            pca_scan_state="drifted"
+        fi
+        if [[ -e "$PCA_WF_REL_PATH" ]]; then
+            pca_wf_state="present"
+        elif [[ "$pca_scan_state" == "skipped" ]]; then
+            pca_wf_state="skipped"
+        elif [[ -e .github/workflows/actions.lock ]]; then
+            pca_wf_state="skipped"
+            log "WARN: $repo_name locks its actions in .github/workflows/actions.lock — the privacy-comment-alert workflow is not delivered (its uses: lines must be tags locked by gh actions-lock, which the sync cannot run). Add it by hand."
+        elif [[ -e platform.lock ]]; then
+            pca_wf_state="skipped"
+            log "privacy-comment-alert: $repo_name is a cms-platform consumer (platform.lock) — the workflow is not delivered, and cms-platform does not carry it yet."
+        elif git check-ignore -q "$PCA_WF_REL_PATH" 2>/dev/null; then
+            pca_wf_state="skipped"
+            log "WARN: $PCA_WF_REL_PATH is gitignored in $repo_name — not delivered."
+        else
+            pca_wf_state="missing"
+        fi
+        log "privacy-comment-alert: scan=$pca_scan_state workflow=$pca_wf_state"
+    fi
+    pca_up_to_date=true
+    if [[ "$pca_scan_state" == "missing" || "$pca_scan_state" == "drifted" || "$pca_wf_state" == "missing" ]]; then
+        pca_up_to_date=false
     fi
 
     # ── skill shell execution: state ───────────────────────────────────
@@ -1633,7 +1815,7 @@ for repo_name in "${REPOS[@]}"; do
     skillshell_up_to_date=true
     [[ "$skillshell_state" == "unset" ]] && skillshell_up_to_date=false
 
-    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $retire_up_to_date && $contributor_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $depcfg_up_to_date && $ac_up_to_date && $skillshell_up_to_date; then
+    if $agents_up_to_date && $claude_md_present && ! $needs_claude_fix && $bootstrap_up_to_date && $retire_up_to_date && $contributor_up_to_date && $gitattr_up_to_date && $automerge_up_to_date && $depcfg_up_to_date && $ac_up_to_date && $pca_up_to_date && $skillshell_up_to_date; then
         log "Up to date — skipping."
         ((SKIP_COUNT++)) || true
         cd "$REPO_ROOT"
@@ -1730,6 +1912,13 @@ for repo_name in "${REPOS[@]}"; do
             log "[DRY RUN] Would write $DEPCFG_REL_PATH (managed Dependabot config, $depcfg_state) $delivery_note"
         fi
 
+        if ! $pca_up_to_date; then
+            [[ "$pca_scan_state" == "missing" || "$pca_scan_state" == "drifted" ]] \
+                && log "[DRY RUN] Would write $PCA_SCAN_REL_PATH (privacy-comment-alert scan $pca_scan_state) $delivery_note"
+            [[ "$pca_wf_state" == "missing" ]] \
+                && log "[DRY RUN] Would add $PCA_WF_REL_PATH (the privacy-comment-alert workflow) $delivery_note"
+        fi
+
         if ! $ac_up_to_date; then
             [[ "$ac_runner_state" == "missing" || "$ac_runner_state" == "drifted" ]] \
                 && log "[DRY RUN] Would write $AC_RUNNER_REL_PATH (runner $ac_runner_state) $delivery_note"
@@ -1739,6 +1928,8 @@ for repo_name in "${REPOS[@]}"; do
                 && log "[DRY RUN] Would add $AC_WF_REL_PATH (the agent-checks CI check) $delivery_note"
             [[ "$ac_trigger_state" == "missing-edited" ]] \
                 && log "[DRY RUN] Would add edited to the pull_request types in $AC_WF_REL_PATH (a description edit must re-run the pr-tldr check) $delivery_note"
+            [[ "$ac_secret_state" == "missing-secret" ]] \
+                && log "[DRY RUN] Would add $AC_SECRET_LINE to the env of the runner step in $AC_WF_REL_PATH (the CI privacy scan reads that secret) $delivery_note"
             [[ "$ac_eol_state" == "missing" ]] \
                 && log "[DRY RUN] Would append the agent-checks LF line to $GITATTR_REL_PATH $delivery_note"
             if $ac_guard_deliver; then
@@ -1958,9 +2149,24 @@ for repo_name in "${REPOS[@]}"; do
         log "dependabot config: $DEPCFG_REL_PATH $([[ "$depcfg_state" == "drifted" ]] && echo updated || echo added)."
     fi
 
+    # ── privacy-comment-alert: write ───────────────────────────────────
+    pca_scan_written=false; pca_wf_written=false
+    if ! $pca_up_to_date; then
+        if [[ "$pca_scan_state" == "missing" || "$pca_scan_state" == "drifted" ]]; then
+            mkdir -p "$(dirname "$PCA_SCAN_REL_PATH")"
+            cp "$PCA_TEMPLATE_DIR/privacy-comment-scan.py" "$PCA_SCAN_REL_PATH"
+            pca_scan_written=true
+        fi
+        if [[ "$pca_wf_state" == "missing" ]]; then
+            mkdir -p "$(dirname "$PCA_WF_REL_PATH")"
+            cp "$PCA_TEMPLATE_DIR/privacy-comment-alert.yml" "$PCA_WF_REL_PATH"
+            pca_wf_written=true
+        fi
+    fi
+
     # ── agent-checks: write ────────────────────────────────────────────
     ac_runner_written=false; ac_dated_written=false; ac_wf_written=false; ac_eol_written=false
-    ac_guard_written=false; ac_registered_now=false; ac_trigger_written=false
+    ac_guard_written=false; ac_registered_now=false; ac_trigger_written=false; ac_secret_written=false
     if ! $ac_up_to_date; then
         if [[ "$ac_runner_state" == "missing" || "$ac_runner_state" == "drifted" ]]; then
             mkdir -p "$(dirname "$AC_RUNNER_REL_PATH")"
@@ -1986,6 +2192,14 @@ for repo_name in "${REPOS[@]}"; do
                 ac_trigger_written=true
             else
                 log "WARN: $repo_name's $AC_WF_REL_PATH was not patched (${ac_trigger_result#skipped: }) — add edited to its pull_request types by hand."
+            fi
+        fi
+        if [[ "$ac_secret_state" == "missing-secret" ]]; then
+            ac_secret_result=$(ac_secret_patch "$AC_WF_REL_PATH")
+            if [[ "$ac_secret_result" == patched ]]; then
+                ac_secret_written=true
+            else
+                log "WARN: $repo_name's $AC_WF_REL_PATH was not patched (${ac_secret_result#skipped: }) — add $AC_SECRET_LINE to the env of the step that runs the runner by hand."
             fi
         fi
         if [[ "$ac_eol_state" == "missing" ]]; then
@@ -2019,7 +2233,7 @@ for repo_name in "${REPOS[@]}"; do
                 fi
             fi
         fi
-        log "agent-checks: runner=$ac_runner_written dated=$ac_dated_written workflow=$ac_wf_written trigger=$ac_trigger_written eol=$ac_eol_written guard=$ac_guard_written registered=$ac_registered_now"
+        log "agent-checks: runner=$ac_runner_written dated=$ac_dated_written workflow=$ac_wf_written trigger=$ac_trigger_written secret=$ac_secret_written eol=$ac_eol_written guard=$ac_guard_written registered=$ac_registered_now"
     fi
     # ── skill shell execution: write ───────────────────────────────────
     skillshell_written=false
@@ -2034,7 +2248,8 @@ for repo_name in "${REPOS[@]}"; do
     fi
 
     ac_any_written=false
-    if $ac_runner_written || $ac_dated_written || $ac_wf_written || $ac_trigger_written || $ac_eol_written || $ac_guard_written || $ac_registered_now; then
+    if $pca_scan_written || $pca_wf_written; then ac_any_written=true; fi
+    if $ac_runner_written || $ac_dated_written || $ac_wf_written || $ac_trigger_written || $ac_secret_written || $ac_eol_written || $ac_guard_written || $ac_registered_now; then
         ac_any_written=true
     fi
 
@@ -2045,7 +2260,10 @@ for repo_name in "${REPOS[@]}"; do
     fi
     $ac_wf_written && add_paths+=("$AC_WF_REL_PATH")
     $ac_trigger_written && add_paths+=("$AC_WF_REL_PATH")
+    $ac_secret_written && add_paths+=("$AC_WF_REL_PATH")
     $ac_guard_written && add_paths+=("$AC_GUARD_REL_PATH")
+    $pca_scan_written && add_paths+=("$PCA_SCAN_REL_PATH")
+    $pca_wf_written && add_paths+=("$PCA_WF_REL_PATH")
     # git add takes a path twice without complaint, so the files the other
     # lanes may also have touched need no once-only bookkeeping here.
     $ac_eol_written && add_paths+=("$GITATTR_REL_PATH")
@@ -2159,6 +2377,17 @@ into the owner's sessions; this repo's AGENTS.md stub and
 $CONTRIBUTOR_REL_PATH carry what any contributor needs."
     fi
 
+    if $pca_scan_written || $pca_wf_written; then
+        bootstrap_note="${bootstrap_note}
+
+Delivers the privacy-comment-alert check ($PCA_WF_REL_PATH and
+$PCA_SCAN_REL_PATH): on an issue, comment or review event it scans the text for
+a denylisted term and, on a match, dispatches the fleet's self-alert email
+(naming only this repository and the scanning run). It never edits or deletes
+the text, and it is not a required check. Managed by _agent-guidance's
+templates/privacy-comment-alert/."
+    fi
+
     if $ac_any_written; then
         bootstrap_note="${bootstrap_note}
 
@@ -2175,6 +2404,14 @@ Adds edited to the pull_request types of $AC_WF_REL_PATH, so editing a pull
 request's description re-runs the check: its pr-tldr rule requires every
 description to begin with a TLDR. The sync otherwise never edits that
 workflow; see the 2026-11-02 addendum to docs/decisions/0021."
+        fi
+        if $ac_secret_written; then
+            bootstrap_note="${bootstrap_note}
+
+Adds the PRIVACY_DENYLIST secret to the env of the step in $AC_WF_REL_PATH
+that runs the runner, so its CI privacy scan can read the denylist. A run
+with no secret only warns and skips the scan; the sync otherwise never edits
+that workflow."
         fi
     fi
 

@@ -33,4 +33,5 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
         run: bash .githooks/agent-checks ci "$BASE" "$HEAD_SHA"

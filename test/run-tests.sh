@@ -26866,12 +26866,20 @@ ac_trig_wf() {
     printf 'name: agent-checks\non:\n  pull_request:  # pull request runs\n%s  push:\n    branches: [main, master]\n\njobs:\n  agent-checks:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash .githooks/agent-checks ci "$BASE" "$HEAD_SHA"\n' "${1:-}"
 }
 
+# ac_sec_wf [<env block>] — an agent-checks.yml whose runner step is a
+# `- name:` step with its own `run:` key: <env block> (whole lines with their
+# newlines, indented to sit under the step) goes right before `run:`.
+ac_sec_wf() {
+    printf 'name: agent-checks\non:\n  pull_request:\n    types: [opened, edited]\n\njobs:\n  agent-checks:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Run the checks\n%s        run: bash .githooks/agent-checks ci "$BASE" "$HEAD_SHA"\n' "${1:-}"
+}
+
 setup_ac_repos() {
     local bare_dir="$1" work="$TEST_DIR/ac-work" name
     rm -rf "$bare_dir" "$work"
     mkdir -p "$bare_dir" "$work"
     for name in ac-none ac-present ac-drift ac-lock ac-platform ac-ignored \
-                ac-trig-bare ac-trig-types ac-trig-current ac-trig-list; do
+                ac-trig-bare ac-trig-types ac-trig-current ac-trig-list \
+                ac-sec-bare ac-sec-env ac-sec-current ac-sec-inline ac-sec-caller; do
         gattr_git init -q --bare --initial-branch=main "$bare_dir/acorg_$name"
         gattr_git init -q --initial-branch=main "$work/$name"
         echo "# $name" > "$work/$name/README.md"
@@ -26897,6 +26905,23 @@ setup_ac_repos() {
             ac-trig-current)
                 ac_trig_wf '    types: [opened, edited]
 ' > "$work/$name/.github/workflows/agent-checks.yml" ;;
+            ac-sec-bare) ac_sec_wf > "$work/$name/.github/workflows/agent-checks.yml" ;;
+            ac-sec-env)
+                ac_sec_wf '        env:
+          BASE: ${{ github.event.pull_request.base.sha }}  # the base
+          HEAD_SHA: ${{ github.sha }}
+' > "$work/$name/.github/workflows/agent-checks.yml" ;;
+            ac-sec-current)
+                ac_sec_wf '        env:
+          PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
+' > "$work/$name/.github/workflows/agent-checks.yml" ;;
+            ac-sec-inline)
+                ac_sec_wf '        env: { BASE: x }
+' > "$work/$name/.github/workflows/agent-checks.yml" ;;
+            ac-sec-caller)
+                # adamdaniel.ai's shape: a thin caller; the runner is named only in a comment.
+                printf 'name: agent-checks\non:\n  pull_request:\n    types: [opened, edited]\n\njobs:\n  agent-checks:\n    # runs .githooks/agent-checks ci inside the reusable workflow\n    uses: acorg/shared/.github/workflows/agent-checks.yml@v1\n' \
+                    > "$work/$name/.github/workflows/agent-checks.yml" ;;
             ac-trig-list)
                 printf 'name: agent-checks\non: [pull_request, push]\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: bash .githooks/agent-checks ci "$B" "$H"\n' \
                     > "$work/$name/.github/workflows/agent-checks.yml" ;;
@@ -26952,6 +26977,11 @@ test_sync_agent_checks() {
     fi
     assert_not_contains "$out-off.log" "agent-checks" \
         "agent-checks (off): the run does not mention the lane at all"
+    if [[ -z "$(ac_show ac-none .githooks/privacy-comment-scan.py)" && -z "$(ac_show ac-none .github/workflows/privacy-comment-alert.yml)" ]]; then
+        pass "privacy-comment-alert (off): with deliver unset neither file is delivered"
+    else
+        fail "privacy-comment-alert (off): with deliver unset neither file is delivered"
+    fi
 
     # ── Dry run with the switch on: reported, nothing written ──
     before=$(bare_fleet_fingerprint "$bare")
@@ -26979,6 +27009,19 @@ test_sync_agent_checks() {
     else
         fail "agent-checks (dry run): the workflow lacking edited is left as it was"
     fi
+
+    ac_section "$out-dry.log" ac-sec-bare > "$out-dry-sec"
+    assert_contains "$out-dry-sec" "[DRY RUN] Would add PRIVACY_DENYLIST: \${{ secrets.PRIVACY_DENYLIST }} to the env of the runner step in $wf" \
+        "agent-checks (dry run): a workflow whose runner step lacks the privacy secret is reported"
+    if cmp -s <(ac_show ac-sec-bare "$wf") <(ac_sec_wf); then
+        pass "agent-checks (dry run): the workflow lacking the privacy secret is left as it was"
+    else
+        fail "agent-checks (dry run): the workflow lacking the privacy secret is left as it was"
+    fi
+    assert_contains "$out-dry-none" "[DRY RUN] Would write .githooks/privacy-comment-scan.py (privacy-comment-alert scan missing)" \
+        "privacy-comment-alert (dry run): the scan script is reported"
+    assert_contains "$out-dry-none" "[DRY RUN] Would add .github/workflows/privacy-comment-alert.yml" \
+        "privacy-comment-alert (dry run): the workflow is reported"
 
     # ── The real run ──
     rc=0; run_ac_sync "$TEST_DIR/ac-repos-on.yml" "$out-1.log" || rc=$?
@@ -27130,6 +27173,108 @@ for g in doc["hooks"]["PreToolUse"]:
         pass "agent-checks (trigger): the commit says why the workflow was edited"
     else
         fail "agent-checks (trigger): the commit says why the workflow was edited — got: $(head -1 <<< "$got")"
+    fi
+
+    # The second edit the sync makes to an existing workflow: the privacy
+    # secret in the runner step's env:.
+    local sec_line='          PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}'
+    if cmp -s <(ac_show ac-sec-bare "$wf") <(ac_sec_wf "        env:
+$sec_line
+"); then
+        pass "agent-checks (secret): a runner step with no env: gets one holding the privacy secret, and nothing else changes"
+    else
+        fail "agent-checks (secret): a runner step with no env: gets one holding the privacy secret — got: $(ac_show ac-sec-bare "$wf" | tail -5 | tr '\n' '|')"
+    fi
+    if cmp -s <(ac_show ac-sec-env "$wf") <(ac_sec_wf "        env:
+$sec_line
+          BASE: \${{ github.event.pull_request.base.sha }}  # the base
+          HEAD_SHA: \${{ github.sha }}
+"); then
+        pass "agent-checks (secret): an existing env: block gets the line first, its comments and keys intact"
+    else
+        fail "agent-checks (secret): an existing env: block gets the line first — got: $(ac_show ac-sec-env "$wf" | tail -6 | tr '\n' '|')"
+    fi
+    if cmp -s <(ac_show ac-sec-current "$wf") <(ac_sec_wf "        env:
+$sec_line
+"); then
+        pass "agent-checks (secret): a step that already passes the secret is left alone"
+    else
+        fail "agent-checks (secret): a step that already passes the secret is left alone"
+    fi
+    if cmp -s <(ac_show ac-sec-inline "$wf") <(ac_sec_wf '        env: { BASE: x }
+'); then
+        pass "agent-checks (secret): an inline env: map is left alone"
+    else
+        fail "agent-checks (secret): an inline env: map is left alone"
+    fi
+    ac_section "$out-1.log" ac-sec-inline > "$out-sec-inline"
+    assert_contains "$out-sec-inline" "WARN: acorg/ac-sec-inline's $wf was not patched (that step's env: is not a block it can add to) — add PRIVACY_DENYLIST: \${{ secrets.PRIVACY_DENYLIST }} to the env of the step that runs the runner by hand." \
+        "agent-checks (secret): an unrecognized shape is named in a WARN"
+    ac_section "$out-1.log" ac-trig-list > "$out-sec-list"
+    assert_contains "$out-sec-list" "was not patched (it has no single \`run:\` line of its own running .githooks/agent-checks ci)" \
+        "agent-checks (secret): a step the patch cannot find is named in a WARN"
+    ac_section "$out-1.log" ac-sec-bare > "$out-sec-bare"
+    assert_contains "$out-sec-bare" "secret=missing-secret" \
+        "agent-checks (secret): the classify line reports the missing secret"
+    ac_section "$out-1.log" ac-sec-caller > "$out-sec-caller"
+    assert_contains "$out-sec-caller" "secret=n/a" \
+        "agent-checks (secret): a thin caller (job-level uses:, no steps) reports secret=n/a"
+    if ! grep -q "WARN" "$out-sec-caller"; then
+        pass "agent-checks (secret): a thin caller gets no WARN about the secret"
+    else
+        fail "agent-checks (secret): a thin caller gets no WARN about the secret — got: $(grep WARN "$out-sec-caller" | head -2)"
+    fi
+    ac_section "$out-1.log" ac-sec-current > "$out-sec-current"
+    assert_contains "$out-sec-current" "secret=current" \
+        "agent-checks (secret): the classify line reports a current secret"
+    got=$(gattr_git -C "$bare/acorg_ac-sec-bare" log -1 --format=%B main)
+    if [[ "$got" == *"Adds the PRIVACY_DENYLIST secret to the env of the step in $wf"* ]]; then
+        pass "agent-checks (secret): the commit says why the workflow was edited"
+    else
+        fail "agent-checks (secret): the commit says why the workflow was edited — got: $(head -1 <<< "$got")"
+    fi
+    if grep -qF 'PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}' "$tmpl/agent-checks.yml" \
+       && grep -qF 'PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}' "$REPO_ROOT/.github/workflows/agent-checks.yml"; then
+        pass "agent-checks (secret): the delivered template and this repo's own workflow both pass the secret"
+    else
+        fail "agent-checks (secret): the delivered template and this repo's own workflow both pass the secret"
+    fi
+
+    # The privacy-comment-alert lane rides the same switch and the same skips.
+    local pca_tmpl="$REPO_ROOT/templates/privacy-comment-alert"
+    local pca_scan=".githooks/privacy-comment-scan.py" pca_wf=".github/workflows/privacy-comment-alert.yml"
+    if cmp -s <(ac_show ac-none "$pca_scan") "$pca_tmpl/privacy-comment-scan.py" \
+       && cmp -s <(ac_show ac-none "$pca_wf") "$pca_tmpl/privacy-comment-alert.yml"; then
+        pass "privacy-comment-alert (sync): the scan script and workflow arrive byte for byte"
+    else
+        fail "privacy-comment-alert (sync): the scan script and workflow arrive byte for byte"
+    fi
+    if [[ -z "$(ac_show ac-lock "$pca_wf")" ]] && cmp -s <(ac_show ac-lock "$pca_scan") "$pca_tmpl/privacy-comment-scan.py"; then
+        pass "privacy-comment-alert (sync): a repo with actions.lock gets the scan script but not the workflow"
+    else
+        fail "privacy-comment-alert (sync): a repo with actions.lock gets the scan script but not the workflow"
+    fi
+    assert_contains "$out-lock" "the privacy-comment-alert workflow is not delivered" \
+        "privacy-comment-alert (sync): the actions.lock skip is named in the log"
+    if [[ -z "$(ac_show ac-platform "$pca_wf")" ]]; then
+        pass "privacy-comment-alert (sync): a cms-platform consumer (platform.lock) gets no workflow"
+    else
+        fail "privacy-comment-alert (sync): a cms-platform consumer (platform.lock) gets no workflow"
+    fi
+    assert_contains "$out-platform" "privacy-comment-alert: acorg/ac-platform is a cms-platform consumer (platform.lock)" \
+        "privacy-comment-alert (sync): the platform.lock skip is named in the log"
+    assert_contains "$out-platform" "cms-platform does not carry it yet" \
+        "privacy-comment-alert (sync): the platform.lock line does not claim the platform carries it"
+    if ! grep -q "the platform carries it instead" "$out-platform"; then
+        pass "privacy-comment-alert (sync): no log line says the platform carries the workflow"
+    else
+        fail "privacy-comment-alert (sync): no log line says the platform carries the workflow"
+    fi
+    got=$(gattr_git -C "$bare/acorg_ac-none" log -1 --format=%B main)
+    if [[ "$got" == *"Delivers the privacy-comment-alert check"* ]]; then
+        pass "privacy-comment-alert (sync): the commit says what it delivers"
+    else
+        fail "privacy-comment-alert (sync): the commit says what it delivers"
     fi
 
     # ── Re-run: nothing left to do ──
@@ -27471,6 +27616,278 @@ test_agent_checks_privacy() {
     rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$repo" --denylist-file "$base/denylist.txt" --commits-stdin <<< "not-a-sha" 2>&1) || rc=$?
     [[ $rc -eq 2 ]] && pass "privacy-denylist.py: a bad commit id exits 2" \
         || fail "privacy-denylist.py: a bad commit id exits 2 — exit $rc: $out"
+}
+
+# privacy (ci): the runner's ci event scans the whole change (added lines,
+# commit messages and identities, the branch name, the PR title and body)
+# against the PRIVACY_DENYLIST secret. Enforced by default (a missing
+# secret only warns); AGENT_CHECKS_PRIVACY_CI=warn makes every finding a warning. Invented patterns only (zebra-canary); the
+# matched text must never reach the output.
+test_agent_checks_privacy_ci() {
+    echo ""
+    echo "=== Test: agent-checks ci privacy scan (added lines, commits, branch, PR title and body) ==="
+    local runner="$REPO_ROOT/templates/agent-checks/agent-checks"
+    local checker="$REPO_ROOT/templates/agent-checks/privacy-denylist.py"
+    local base="$TEST_DIR/ac-privacy-ci" repo rc out err base_sha hit_sha clean_sha
+    rm -rf "$base"; mkdir -p "$base"
+    repo="$base/repo"
+    git init -q "$repo"
+    printf 'one\n' > "$repo/f.txt"
+    git -C "$repo" add f.txt
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q -m "base commit"
+    base_sha=$(git -C "$repo" rev-parse HEAD)
+    printf 'one\nclean line\n' > "$repo/f.txt"
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q -a -m "a clean change"
+    clean_sha=$(git -C "$repo" rev-parse HEAD)
+    printf 'one\nclean line\nthe Zebra-Canary line\n' > "$repo/f.txt"
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q -a -m "a change with a hit"
+    hit_sha=$(git -C "$repo" rev-parse HEAD)
+    local denylist=$'# invented patterns\nzebra-canary\nnever-matches-(zzz)\n'
+
+    ac_pci_run() {   # <base> <head> <env...> — the ci event under Actions; sets rc, out, err
+        local b=$1 h=$2; shift 2
+        rc=0
+        (cd "$repo" && env -u GITHUB_EVENT_NAME -u GITHUB_EVENT_PATH -u GITHUB_ACTOR -u GITHUB_HEAD_REF -u PRIVACY_DENYLIST \
+            -u AGENT_CHECKS_PRIVACY_CI GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 AGENT_CHECKS_LOG=off \
+            GITHUB_ACTIONS=true PRIVACY_DENYLIST_FILE="$base/no-such-file" "$@" \
+            bash "$runner" ci "$b" "$h") > "$base/out" 2> "$base/err" || rc=$?
+        out=$(cat "$base/out"); err=$(cat "$base/err")
+    }
+    ac_pci_event() {   # <title> <body> <login> — an event file path on stdout
+        python3 -c 'import json,sys; print(json.dumps({"pull_request": {"title": sys.argv[1], "body": sys.argv[2], "user": {"login": sys.argv[3]}}}))' \
+            "$1" "$2" "$3" > "$base/event.json"
+        printf '%s' "$base/event.json"
+    }
+
+    # Warn mode (the escape hatch): every outcome is a warning, the job passes.
+    ac_pci_run "$base_sha" "$hit_sha" PRIVACY_DENYLIST="$denylist" AGENT_CHECKS_PRIVACY_CI=warn
+    if [[ $rc -eq 0 && "$err" == *"::warning title=privacy::"* && "$err" == *"f.txt:3: pattern #1"* && "$err" != *'::error'* ]]; then
+        pass "agent-checks privacy ci: warn mode reports an added-line hit as a warning with place and pattern number, and passes"
+    else
+        fail "agent-checks privacy ci: warn mode reports an added-line hit as a warning — exit $rc: $err"
+    fi
+    if [[ "$out$err" != *anary* && "$out$err" != *ebra* && "$out$err" != *never-matches* ]]; then
+        pass "agent-checks privacy ci: neither the matched text nor any pattern appears in the output"
+    else
+        fail "agent-checks privacy ci: neither the matched text nor any pattern appears in the output — $err"
+    fi
+    ac_pci_run "$base_sha" "$clean_sha" PRIVACY_DENYLIST="$denylist"
+    if [[ $rc -eq 0 && "$err" != *privacy* ]]; then
+        pass "agent-checks privacy ci: a clean change passes in the default (enforce) mode without a word"
+    else
+        fail "agent-checks privacy ci: a clean change passes in enforce mode — exit $rc: $err"
+    fi
+
+    # The default is enforce: a hit refuses with no switch set.
+    ac_pci_run "$base_sha" "$hit_sha" PRIVACY_DENYLIST="$denylist"
+    if [[ $rc -eq 1 && "$err" == *"::error title=agent-checks privacy::"* && "$err" == *"f.txt:3: pattern #1"* && "$err" != *anary* ]]; then
+        pass "agent-checks privacy ci: the default (enforce) mode refuses an added-line hit, naming only the place and pattern number"
+    else
+        fail "agent-checks privacy ci: the default (enforce) mode refuses an added-line hit — exit $rc: $err"
+    fi
+    # An unknown or zero base scans the head commit's own diff.
+    ac_pci_run 0000000000000000000000000000000000000000 "$hit_sha" PRIVACY_DENYLIST="$denylist" AGENT_CHECKS_PRIVACY_CI=enforce
+    [[ $rc -eq 1 && "$err" == *"f.txt:3: pattern #1"* ]] && pass "agent-checks privacy ci: a zero base scans the head commit's own diff" \
+        || fail "agent-checks privacy ci: a zero base scans the head commit's own diff — exit $rc: $err"
+    ac_pci_run 0000000000000000000000000000000000000000 "$clean_sha" PRIVACY_DENYLIST="$denylist" AGENT_CHECKS_PRIVACY_CI=enforce
+    [[ $rc -eq 0 ]] && pass "agent-checks privacy ci: a zero base does not scan commits before the head" \
+        || fail "agent-checks privacy ci: a zero base does not scan commits before the head — exit $rc: $err"
+
+    # Places: PR title, PR body, branch name, commit message, commit identity.
+    local ev
+    ev=$(ac_pci_event "Fix the zebra-canary" $'## TLDR\n\nline two ZEBRA-CANARY' someone)
+    ac_pci_run "$base_sha" "$clean_sha" PRIVACY_DENYLIST="$denylist" GITHUB_EVENT_PATH="$ev"
+    if [[ $rc -eq 1 && "$err" == *"PR title:1: pattern #1"* && "$err" == *"PR body:3: pattern #1"* && "$err" != *anary* ]]; then
+        pass "agent-checks privacy ci: a PR title and body hit are refused by place and line"
+    else
+        fail "agent-checks privacy ci: a PR title and body hit are refused — exit $rc: $err"
+    fi
+    ev=$(ac_pci_event "Fix it" $'## TLDR\n\nclean' someone)
+    ac_pci_run "$base_sha" "$clean_sha" PRIVACY_DENYLIST="$denylist" GITHUB_EVENT_PATH="$ev"
+    [[ $rc -eq 0 ]] && pass "agent-checks privacy ci: a clean PR title and body pass" \
+        || fail "agent-checks privacy ci: a clean PR title and body pass — exit $rc: $err"
+    ac_pci_run "$base_sha" "$clean_sha" PRIVACY_DENYLIST="$denylist" AGENT_CHECKS_PRIVACY_CI=enforce GITHUB_HEAD_REF=feat/zebra-canary-thing
+    if [[ $rc -eq 1 && "$err" == *"branch name: pattern #1"* && "$err" != *anary* ]]; then
+        pass "agent-checks privacy ci: a branch name hit (GITHUB_HEAD_REF) is refused without printing the name"
+    else
+        fail "agent-checks privacy ci: a branch name hit is refused — exit $rc: $err"
+    fi
+    git -C "$repo" -c user.name=Example -c user.email=agent@example.com commit -q --allow-empty -m "mention zebra-canary here"
+    local msg_sha; msg_sha=$(git -C "$repo" rev-parse HEAD)
+    ac_pci_run "$base_sha" "$msg_sha" PRIVACY_DENYLIST="$denylist" AGENT_CHECKS_PRIVACY_CI=enforce
+    if [[ $rc -eq 1 && "$err" == *"${msg_sha:0:12}:message:1: pattern #1"* && "$err" != *anary* ]]; then
+        pass "agent-checks privacy ci: a commit message hit is refused, naming the commit and line"
+    else
+        fail "agent-checks privacy ci: a commit message hit is refused — exit $rc: $err"
+    fi
+    git -C "$repo" -c user.name=Example -c user.email=agent@zebra-canary.example.net commit -q --allow-empty -m "plain"
+    local id_sha; id_sha=$(git -C "$repo" rev-parse HEAD)
+    ac_pci_run "$msg_sha" "$id_sha" PRIVACY_DENYLIST="$denylist" AGENT_CHECKS_PRIVACY_CI=enforce
+    if [[ $rc -eq 1 && "$err" == *"${id_sha:0:12}:identity:2: pattern #1"* && "$err" != *anary* ]]; then
+        pass "agent-checks privacy ci: a commit identity hit is refused, naming the commit and identity line"
+    else
+        fail "agent-checks privacy ci: a commit identity hit is refused — exit $rc: $err"
+    fi
+
+    # A missing secret only ever warns and skips, in every mode and for every
+    # author: the runner is also copied to repos with no denylist.
+    local mode
+    for mode in default warn enforce; do
+        if [[ $mode == default ]]; then ac_pci_run "$base_sha" "$clean_sha"
+        else ac_pci_run "$base_sha" "$clean_sha" AGENT_CHECKS_PRIVACY_CI=$mode; fi
+        if [[ $rc -eq 0 && "$err" == *"::warning title=privacy::"* && "$err" == *PRIVACY_DENYLIST* && "$err" != *'::error'* ]]; then
+            pass "agent-checks privacy ci: $mode mode with no secret warns, skips and passes"
+        else
+            fail "agent-checks privacy ci: $mode mode with no secret warns, skips and passes — exit $rc: $err"
+        fi
+    done
+    ev=$(ac_pci_event "Fix" $'## TLDR\n\nx' 'someone-else')
+    ac_pci_run "$base_sha" "$clean_sha" GITHUB_EVENT_PATH="$ev"
+    [[ $rc -eq 0 && "$err" == *"::warning title=privacy::"* ]] && pass "agent-checks privacy ci: no secret on a non-Dependabot PR warns and passes too" \
+        || fail "agent-checks privacy ci: no secret on a non-Dependabot PR warns and passes too — exit $rc: $err"
+    ac_pci_run "$base_sha" "$clean_sha" PRIVACY_DENYLIST=$'# only a comment\n'
+    [[ $rc -eq 0 && "$err" == *"::warning title=privacy::"* ]] && pass "agent-checks privacy ci: a secret holding no pattern warns and passes" \
+        || fail "agent-checks privacy ci: a secret holding no pattern warns and passes — exit $rc: $err"
+    # An event with no pull_request (a push) is ignored.
+    printf '{"ref":"refs/heads/main"}\n' > "$base/push-event.json"
+    ac_pci_run "$base_sha" "$clean_sha" PRIVACY_DENYLIST="$denylist" GITHUB_EVENT_PATH="$base/push-event.json"
+    [[ $rc -eq 0 ]] && pass "agent-checks privacy ci: an event with no pull_request is ignored" \
+        || fail "agent-checks privacy ci: an event with no pull_request is ignored — exit $rc: $err"
+
+    # Outside Actions with no denylist: silent.
+    rc=0
+    (cd "$repo" && env -u GITHUB_ACTIONS -u GITHUB_EVENT_NAME -u GITHUB_EVENT_PATH -u PRIVACY_DENYLIST GIT_CONFIG_GLOBAL=/dev/null \
+        AGENT_CHECKS_LOG=off AGENT_CHECKS_PRIVACY_CI=enforce PRIVACY_DENYLIST_FILE="$base/no-such-file" \
+        bash "$runner" ci "$base_sha" "$clean_sha") > "$base/out" 2> "$base/err" || rc=$?
+    [[ $rc -eq 0 && ! -s "$base/err" ]] && pass "agent-checks privacy ci: outside Actions with no denylist the scan is silent, even when enforcing" \
+        || fail "agent-checks privacy ci: outside Actions with no denylist the scan is silent — exit $rc: $(cat "$base/err")"
+
+    # A checker that cannot run: warn passes, enforce refuses, no pattern printed.
+    ac_pci_run "$base_sha" "$clean_sha" 'PRIVACY_DENYLIST=a{99999999999}' AGENT_CHECKS_PRIVACY_CI=warn
+    [[ $rc -eq 0 && "$err" == *"::warning title=privacy::"* && "$err" == *"could not be checked"* ]] && pass "agent-checks privacy ci: warn mode, a checker error warns and passes" \
+        || fail "agent-checks privacy ci: warn mode, a checker error warns and passes — exit $rc: $err"
+    ac_pci_run "$base_sha" "$clean_sha" 'PRIVACY_DENYLIST=a{99999999999}' AGENT_CHECKS_PRIVACY_CI=enforce
+    [[ $rc -eq 1 && "$err" == *"could not be checked"* && "$err" != *99999* ]] && pass "agent-checks privacy ci: enforce mode, a checker error refuses without printing the pattern" \
+        || fail "agent-checks privacy ci: enforce mode, a checker error refuses — exit $rc: $err"
+    local nopy="$base/nopy" tool
+    mkdir -p "$nopy"
+    for tool in bash git grep sed tr cat head tail date mkdir dirname sha256sum env id hostname uname mktemp rm sort wc cut awk basename; do
+        [[ -x "$(command -v "$tool")" ]] && ln -sf "$(command -v "$tool")" "$nopy/$tool"
+    done
+    ac_pci_run "$base_sha" "$hit_sha" PATH="$nopy" PRIVACY_DENYLIST="$denylist" AGENT_CHECKS_PRIVACY_CI=warn
+    [[ $rc -eq 0 && "$err" == *"::warning title=privacy::"* && "$err" == *python3* ]] && pass "agent-checks privacy ci: warn mode without python3 warns and passes" \
+        || fail "agent-checks privacy ci: warn mode without python3 warns and passes — exit $rc: $err"
+    ac_pci_run "$base_sha" "$hit_sha" PATH="$nopy" PRIVACY_DENYLIST="$denylist" AGENT_CHECKS_PRIVACY_CI=enforce
+    [[ $rc -eq 0 && "$err" == *"::warning title=privacy::"* && "$err" == *python3* && "$err" != *'::error'* ]] && pass "agent-checks privacy ci: enforce mode without python3 warns and passes" \
+        || fail "agent-checks privacy ci: enforce mode without python3 warns and passes — exit $rc: $err"
+    # A missing privacy-denylist.py (the sync can skip it) warns in both modes.
+    local noscript="$base/noscript"
+    rm -rf "$noscript"; mkdir -p "$noscript"
+    cp "$runner" "$noscript/agent-checks"
+    for mode in warn enforce; do
+        rc=0
+        (cd "$repo" && env -u GITHUB_EVENT_NAME -u GITHUB_EVENT_PATH -u GITHUB_HEAD_REF GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+            AGENT_CHECKS_LOG=off GITHUB_ACTIONS=true PRIVACY_DENYLIST_FILE="$base/no-such-file" PRIVACY_DENYLIST="$denylist" \
+            AGENT_CHECKS_PRIVACY_CI=$mode bash "$noscript/agent-checks" ci "$base_sha" "$hit_sha") > "$base/out" 2> "$base/err" || rc=$?
+        err=$(cat "$base/err")
+        [[ $rc -eq 0 && "$err" == *"::warning title=privacy::"* && "$err" != *'::error'* ]] && pass "agent-checks privacy ci: $mode mode with privacy-denylist.py missing warns and passes" \
+            || fail "agent-checks privacy ci: $mode mode with privacy-denylist.py missing warns and passes — exit $rc: $err"
+    done
+
+    # The checker's own interface: --diff and --event-path.
+    printf 'zebra-canary\n' > "$base/pat.txt"
+    local drepo="$base/drepo" d0 d1
+    git init -q "$drepo"
+    printf 'a\nb\n' > "$drepo/g.txt"
+    git -C "$drepo" add g.txt
+    git -C "$drepo" -c user.name=Example -c user.email=agent@example.com commit -q -m one
+    d0=$(git -C "$drepo" rev-parse HEAD)
+    printf 'a\nzebra-canary\nb\n++ b/zebra-canary\n' > "$drepo/g.txt"
+    printf 'zebra-canary\n' > "$drepo/zebra-canary-name.txt"
+    printf 'zebra-canary\0binary\n' > "$drepo/blob.bin"
+    git -C "$drepo" add -A
+    git -C "$drepo" -c user.name=Example -c user.email=agent@example.com commit -q -m two
+    d1=$(git -C "$drepo" rev-parse HEAD)
+    rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$drepo" --denylist-file "$base/pat.txt" --diff "$d0" "$d1" 2>&1) || rc=$?
+    if [[ $rc -eq 1 && "$out" == *"  g.txt:2: pattern #1"* && "$out" == *"  g.txt:4: pattern #1"* \
+          && "$out" == *"<path withheld>:1: pattern #1"* && "$out" != *blob.bin* && "$out" != *zebra* ]]; then
+        pass "privacy-denylist.py: --diff reports new-file line numbers, treats a '+++' content line as content, skips binary files, withholds a denylisted path"
+    else
+        fail "privacy-denylist.py: --diff reports new-file line numbers — exit $rc: $out"
+    fi
+    rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$drepo" --denylist-file "$base/pat.txt" --diff "$d1" "$d1" 2>&1) || rc=$?
+    [[ $rc -eq 0 && "$out" == OK* ]] && pass "privacy-denylist.py: --diff of an empty range is clean" \
+        || fail "privacy-denylist.py: --diff of an empty range is clean — exit $rc: $out"
+    rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$drepo" --denylist-file "$base/pat.txt" --diff "" "$d1" 2>&1) || rc=$?
+    [[ $rc -eq 1 && "$out" == *"g.txt:2: pattern #1"* ]] && pass "privacy-denylist.py: --diff with an empty base scans the head's own diff" \
+        || fail "privacy-denylist.py: --diff with an empty base scans the head's own diff — exit $rc: $out"
+    rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$drepo" --denylist-file "$base/pat.txt" --diff "$d0" "--output=x" 2>&1) || rc=$?
+    [[ $rc -eq 2 ]] && pass "privacy-denylist.py: --diff refuses a head that is not a commit name" \
+        || fail "privacy-denylist.py: --diff refuses a head that is not a commit name — exit $rc: $out"
+    # A path the range adds is matched even with no added lines (empty file),
+    # binary content, or a rename; its text is never printed.
+    local prepo="$base/prepo" p0 p1 p2 p3
+    git init -q "$prepo"
+    printf 'old content\n' > "$prepo/plain.txt"
+    printf 'keep one\nkeep two\nkeep three\nkeep four\n' > "$prepo/zebra-canary-old.txt"
+    git -C "$prepo" add -A
+    git -C "$prepo" -c user.name=Example -c user.email=agent@example.com commit -q -m one
+    p0=$(git -C "$prepo" rev-parse HEAD)
+    : > "$prepo/empty-zebra-canary.txt"
+    printf '\0\1binary' > "$prepo/blob-zebra-canary.bin"
+    git -C "$prepo" add -A
+    git -C "$prepo" -c user.name=Example -c user.email=agent@example.com commit -q -m two
+    p1=$(git -C "$prepo" rev-parse HEAD)
+    rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$prepo" --denylist-file "$base/pat.txt" --diff "$p0" "$p1" 2>&1) || rc=$?
+    if [[ $rc -eq 1 && "$out" == *"FAILED: 2 "* && "$out" == *"  <path withheld>: pattern #1"* && "$out" != *empty* && "$out" != *blob* && "$out" != *zebra-canary* ]]; then
+        pass "privacy-denylist.py: --diff matches an added empty file and an added binary file by path, printing no path text"
+    else
+        fail "privacy-denylist.py: --diff matches added empty and binary paths — exit $rc: $out"
+    fi
+    # A pure rename of an old file adds no lines: the file's existing text is
+    # not re-flagged. A rename into a matching path is still a path finding.
+    printf 'zebra-canary\n' > "$prepo/plain.txt"
+    git -C "$prepo" -c user.name=Example -c user.email=agent@example.com commit -q -a -m three
+    p2=$(git -C "$prepo" rev-parse HEAD)
+    git -C "$prepo" mv plain.txt renamed.txt
+    git -C "$prepo" -c user.name=Example -c user.email=agent@example.com commit -q -m four
+    p3=$(git -C "$prepo" rev-parse HEAD)
+    rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$prepo" --denylist-file "$base/pat.txt" --diff "$p2" "$p3" 2>&1) || rc=$?
+    [[ $rc -eq 0 && "$out" == OK* ]] && pass "privacy-denylist.py: --diff does not re-flag the existing lines of a pure rename" \
+        || fail "privacy-denylist.py: --diff does not re-flag a pure rename — exit $rc: $out"
+    git -C "$prepo" mv renamed.txt zebra-canary-moved.txt
+    git -C "$prepo" -c user.name=Example -c user.email=agent@example.com commit -q -m five
+    rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$prepo" --denylist-file "$base/pat.txt" --diff "$p3" HEAD 2>&1) || rc=$?
+    [[ $rc -eq 1 && "$out" == *"  <path withheld>: pattern #1"* && "$out" != *zebra-canary-moved* && "$out" != *":1:"* ]] && pass "privacy-denylist.py: --diff flags a rename into a matching path, by path only" \
+        || fail "privacy-denylist.py: --diff flags a rename into a matching path — exit $rc: $out"
+    # A rename with an edit reports only the added line.
+    printf 'one\ntwo\nthree\nfour\nfive\nsix\n' > "$prepo/mv-src.txt"
+    git -C "$prepo" add -A
+    git -C "$prepo" -c user.name=Example -c user.email=agent@example.com commit -q -m six
+    p0=$(git -C "$prepo" rev-parse HEAD)
+    git -C "$prepo" mv mv-src.txt mv-dst.txt
+    printf 'one\ntwo\nthree\nfour\nfive\nsix\nzebra-canary\n' > "$prepo/mv-dst.txt"
+    git -C "$prepo" add -A
+    git -C "$prepo" -c user.name=Example -c user.email=agent@example.com commit -q -m seven
+    rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$prepo" --denylist-file "$base/pat.txt" --diff "$p0" HEAD 2>&1) || rc=$?
+    [[ $rc -eq 1 && "$out" == *"FAILED: 1 "* && "$out" == *"mv-dst.txt:7: pattern #1"* ]] && pass "privacy-denylist.py: --diff of a rename with an edit reports only the added line" \
+        || fail "privacy-denylist.py: --diff of a rename with an edit reports only the added line — exit $rc: $out"
+    # CRLF: a trailing \r does not defeat an anchored pattern.
+    printf '^zebra-canary$\n' > "$base/anchor.txt"
+    printf 'zebra-canary\r\nother\r\n' > "$prepo/crlf.txt"
+    git -C "$prepo" add -A
+    git -C "$prepo" -c user.name=Example -c user.email=agent@example.com commit -q -m eight
+    rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$prepo" --denylist-file "$base/anchor.txt" --diff HEAD~1 HEAD 2>&1) || rc=$?
+    [[ $rc -eq 1 && "$out" == *"crlf.txt:1: pattern #1"* ]] && pass "privacy-denylist.py: --diff strips a trailing CR so an anchored pattern matches a CRLF line" \
+        || fail "privacy-denylist.py: --diff strips a trailing CR — exit $rc: $out"
+    printf '{"pull_request":{"title":"ok","body":null}}\n' > "$base/ev-null.json"
+    rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$drepo" --denylist-file "$base/pat.txt" --event-path "$base/ev-null.json" 2>&1) || rc=$?
+    [[ $rc -eq 0 ]] && pass "privacy-denylist.py: --event-path tolerates a null PR body" \
+        || fail "privacy-denylist.py: --event-path tolerates a null PR body — exit $rc: $out"
+    printf 'not json' > "$base/ev-bad.json"
+    rc=0; out=$(env -u PRIVACY_DENYLIST python3 "$checker" --repo "$drepo" --denylist-file "$base/pat.txt" --event-path "$base/ev-bad.json" 2>&1) || rc=$?
+    [[ $rc -eq 2 && "$out" != *"not json"* ]] && pass "privacy-denylist.py: --event-path with an unreadable payload exits 2" \
+        || fail "privacy-denylist.py: --event-path with an unreadable payload exits 2 — exit $rc: $out"
 }
 
 # pre-push refuses a push to the lock bumper's branch, because a commit the
@@ -28488,11 +28905,155 @@ test_self_agent_checks() {
     else
         fail "self agent-checks: a workflow runs the runner in CI"
     fi
+    if cmp -s "$REPO_ROOT/.githooks/privacy-comment-scan.py" "$REPO_ROOT/templates/privacy-comment-alert/privacy-comment-scan.py"; then
+        pass "self agent-checks: .githooks/privacy-comment-scan.py matches its template"
+    else
+        fail "self agent-checks: .githooks/privacy-comment-scan.py matches its template — copy the template over it"
+    fi
     if grep -qF 'templates/agent-checks/agent-checks-guard.sh' "$REPO_ROOT/.claude/settings.json"; then
         pass "self agent-checks: the guard is registered from the template"
     else
         fail "self agent-checks: the guard is registered from the template"
     fi
+}
+
+# The privacy-comment-alert workflow template (issue 636): its parsed shape,
+# and the scan script on fixture event files. Patterns are invented.
+test_privacy_comment_alert() {
+    echo ""
+    echo "=== Test: privacy-comment-alert workflow shape and scan script ==="
+    local tmpl="$REPO_ROOT/templates/privacy-comment-alert" own="$REPO_ROOT/.github/workflows/privacy-comment-alert.yml"
+    local wf got want d="$TEST_DIR/pca" scan ev out rc
+    rm -rf "$d"; mkdir -p "$d"
+    scan="$tmpl/privacy-comment-scan.py"
+
+    for wf in "$tmpl/privacy-comment-alert.yml" "$own"; do
+        local label="${wf#"$REPO_ROOT"/}"
+        got=$(yq -r '.on | to_entries | .[] | .key + ":" + (.value.types | join(","))' "$wf" | tr '\n' ' ')
+        want="issue_comment:created,edited issues:opened,edited pull_request_review_comment:created,edited pull_request_review:submitted,edited "
+        if [[ "$got" == "$want" ]]; then
+            pass "privacy-comment-alert: $label triggers on the four comment events"
+        else
+            fail "privacy-comment-alert: $label triggers on the four comment events — got: $got"
+        fi
+        got=$(yq -o=json -I=0 '.permissions' "$wf")
+        if [[ "$got" == '{"contents":"read"}' ]]; then
+            pass "privacy-comment-alert: $label asks for contents: read and nothing more"
+        else
+            fail "privacy-comment-alert: $label asks for contents: read and nothing more — got: $got"
+        fi
+        got=$(yq -r '.jobs | to_entries | .[] | .value.steps[] | select(.uses != null and (.uses | test("checkout"))) | .with."persist-credentials"' "$wf")
+        if [[ "$got" == "false" ]]; then
+            pass "privacy-comment-alert: $label checks out without persisting credentials"
+        else
+            fail "privacy-comment-alert: $label checks out without persisting credentials — got: $got"
+        fi
+        # No step interpolates an event field into a shell script.
+        got=$(yq -r '.jobs[].steps[] | select(.run != null) | .run' "$wf" | grep -c 'github\.event' || true)
+        if [[ "$got" == "0" ]]; then
+            pass "privacy-comment-alert: $label never interpolates event data into a run: block"
+        else
+            fail "privacy-comment-alert: $label never interpolates event data into a run: block"
+        fi
+    done
+    got=$(yq -r '.jobs[].steps[] | select(.uses != null) | .uses' "$tmpl/privacy-comment-alert.yml" | grep -cvE '@[0-9a-f]{40}$' || true)
+    if [[ "$got" == "0" ]]; then
+        pass "privacy-comment-alert: the template pins every action to a full commit SHA"
+    else
+        fail "privacy-comment-alert: the template pins every action to a full commit SHA"
+    fi
+    got=$(yq -r '.on | has("pull_request") or has("push")' "$tmpl/privacy-comment-alert.yml")
+    if [[ "$got" == "false" ]]; then
+        pass "privacy-comment-alert: the template has no pull_request or push trigger (so it cannot be a required check)"
+    else
+        fail "privacy-comment-alert: the template has no pull_request or push trigger"
+    fi
+
+    # The scan script, template layout (privacy-denylist.py is found in
+    # templates/agent-checks) and delivered layout (beside it in .githooks).
+    run_scan() {   # <script> <event name> <event json> [PRIVACY_DENYLIST]; sets out, rc
+        printf '%s' "$3" > "$d/event.json"
+        rc=0
+        out=$(env -i PATH="$PATH" GITHUB_EVENT_NAME="$2" GITHUB_EVENT_PATH="$d/event.json" \
+              ${4+PRIVACY_DENYLIST="$4"} python3 -I "$1" 2> "$d/err") || rc=$?
+    }
+    local pat=$'# a comment\nzebra-canary\n\nnever-(zzz)-matches'
+    local s
+    for s in "$scan" "$REPO_ROOT/.githooks/privacy-comment-scan.py"; do
+        local sl="${s#"$REPO_ROOT"/}"
+        run_scan "$s" issue_comment '{"comment":{"author_association":"OWNER","body":"see the Zebra-Canary notes"}}' "$pat"
+        if [[ $rc -eq 0 && "$out" == "match" ]]; then pass "privacy-comment-alert: $sl prints match for a denylisted comment (any case)"; else fail "privacy-comment-alert: $sl prints match for a denylisted comment — got '$out' rc $rc"; fi
+        run_scan "$s" issue_comment '{"comment":{"author_association":"OWNER","body":"nothing here"}}' "$pat"
+        if [[ "$out" == "clean" ]]; then pass "privacy-comment-alert: $sl prints clean for a clean comment"; else fail "privacy-comment-alert: $sl prints clean — got '$out'"; fi
+        run_scan "$s" issue_comment '{"comment":{"author_association":"OWNER","body":"zebra-canary"}}'
+        if [[ "$out" == "no-denylist" ]]; then pass "privacy-comment-alert: $sl prints no-denylist when PRIVACY_DENYLIST is unset"; else fail "privacy-comment-alert: $sl prints no-denylist when unset — got '$out'"; fi
+        run_scan "$s" issue_comment '{"comment":{"author_association":"OWNER","body":"zebra-canary"}}' $'# only a comment\n\n'
+        if [[ "$out" == "no-denylist" ]]; then pass "privacy-comment-alert: $sl prints no-denylist when the denylist holds no pattern"; else fail "privacy-comment-alert: $sl prints no-denylist for an empty list — got '$out'"; fi
+        run_scan "$s" issues '{"issue":{"author_association":"MEMBER","title":"zebra-canary","body":null}}' "$pat"
+        if [[ "$out" == "match" ]]; then pass "privacy-comment-alert: $sl scans an issue's title"; else fail "privacy-comment-alert: $sl scans an issue's title — got '$out'"; fi
+        run_scan "$s" issues '{"issue":{"author_association":"MEMBER","title":"t","body":"zebra-canary"}}' "$pat"
+        if [[ "$out" == "match" ]]; then pass "privacy-comment-alert: $sl scans an issue's body"; else fail "privacy-comment-alert: $sl scans an issue's body — got '$out'"; fi
+        run_scan "$s" issue_comment '{"comment":{"author_association":"OWNER","body":"fine"},"issue":{"title":"zebra-canary","body":"zebra-canary"}}' "$pat"
+        if [[ "$out" == "clean" ]]; then pass "privacy-comment-alert: $sl leaves the parent issue's text to the issues event"; else fail "privacy-comment-alert: $sl leaves the parent issue's text to the issues event — got '$out'"; fi
+        run_scan "$s" pull_request_review '{"review":{"author_association":"COLLABORATOR","body":"zebra-canary"}}' "$pat"
+        if [[ "$out" == "match" ]]; then pass "privacy-comment-alert: $sl scans a review body"; else fail "privacy-comment-alert: $sl scans a review body — got '$out'"; fi
+        run_scan "$s" pull_request_review '{"review":{"author_association":"COLLABORATOR","body":null}}' "$pat"
+        if [[ "$out" == "clean" ]]; then pass "privacy-comment-alert: $sl reads an empty review body as clean"; else fail "privacy-comment-alert: $sl reads an empty review body as clean — got '$out'"; fi
+        run_scan "$s" pull_request_review_comment '{"comment":{"author_association":"OWNER","body":"zebra-canary"}}' "$pat"
+        if [[ "$out" == "match" ]]; then pass "privacy-comment-alert: $sl scans a review comment"; else fail "privacy-comment-alert: $sl scans a review comment — got '$out'"; fi
+        run_scan "$s" push '{"comment":{"author_association":"OWNER","body":"zebra-canary"}}' "$pat"
+        if [[ "$out" == "error" ]]; then pass "privacy-comment-alert: $sl prints error for an event it does not scan"; else fail "privacy-comment-alert: $sl prints error for an unscanned event — got '$out'"; fi
+        run_scan "$s" issue_comment 'not json' "$pat"
+        if [[ "$out" == "error" ]]; then pass "privacy-comment-alert: $sl prints error for an unreadable event file"; else fail "privacy-comment-alert: $sl prints error for an unreadable event file — got '$out'"; fi
+        run_scan "$s" issue_comment '{"comment":{"author_association":"OWNER","body":"x"}}' $'(unclosed'
+        if [[ "$out" == "error" ]] && ! grep -q 'unclosed' "$d/err"; then pass "privacy-comment-alert: $sl prints error for an invalid pattern, without quoting it"; else fail "privacy-comment-alert: $sl prints error for an invalid pattern without quoting it — got '$out'"; fi
+        run_scan "$s" issue_comment '{"comment":{"author_association":"OWNER","body":"the zebra-canary and more text"}}' "$pat"
+        if [[ "$out" != *zebra* && "$out" != *canary* && "$(cat "$d/err")" != *zebra* && "$out" != *"#"* ]]; then pass "privacy-comment-alert: $sl never prints the text, the pattern or a number"; else fail "privacy-comment-alert: $sl never prints the text, the pattern or a number"; fi
+    done
+
+    # Only a trusted author's text is scanned: an outsider must not be able to
+    # test guesses against the denylist, so their text reads "skipped", match or not.
+    for s in "$scan" "$REPO_ROOT/.githooks/privacy-comment-scan.py"; do
+        local sl="${s#"$REPO_ROOT"/}" assoc
+        for assoc in NONE CONTRIBUTOR FIRST_TIME_CONTRIBUTOR FIRST_TIMER MANNEQUIN ""; do
+            run_scan "$s" issue_comment '{"comment":{"author_association":"'"$assoc"'","user":{"type":"User"},"body":"zebra-canary"}}' "$pat"
+            if [[ "$out" == "skipped" ]]; then pass "privacy-comment-alert: $sl skips a matching comment from author_association '${assoc:-empty}'"; else fail "privacy-comment-alert: $sl skips a matching comment from '${assoc:-empty}' — got '$out'"; fi
+        done
+        run_scan "$s" issue_comment '{"comment":{"body":"zebra-canary"}}' "$pat"
+        if [[ "$out" == "skipped" ]]; then pass "privacy-comment-alert: $sl skips a matching comment with no author information"; else fail "privacy-comment-alert: $sl skips a comment with no author information — got '$out'"; fi
+        run_scan "$s" issue_comment '{"comment":{"author_association":"NONE","user":{"type":"User"},"body":"fine"}}' "$pat"
+        if [[ "$out" == "skipped" ]]; then pass "privacy-comment-alert: $sl answers an outsider's clean comment the same way (skipped)"; else fail "privacy-comment-alert: $sl answers an outsider's clean comment the same way — got '$out'"; fi
+        run_scan "$s" issues '{"issue":{"author_association":"NONE","title":"zebra-canary","body":"x"}}' "$pat"
+        if [[ "$out" == "skipped" ]]; then pass "privacy-comment-alert: $sl skips an outsider's matching issue"; else fail "privacy-comment-alert: $sl skips an outsider's matching issue — got '$out'"; fi
+        run_scan "$s" pull_request_review '{"review":{"author_association":"CONTRIBUTOR","body":"zebra-canary"}}' "$pat"
+        if [[ "$out" == "skipped" ]]; then pass "privacy-comment-alert: $sl skips an outsider's matching review"; else fail "privacy-comment-alert: $sl skips an outsider's matching review — got '$out'"; fi
+        run_scan "$s" issue_comment '{"comment":{"author_association":"NONE","user":{"type":"Bot"},"body":"zebra-canary"}}' "$pat"
+        if [[ "$out" == "match" ]]; then pass "privacy-comment-alert: $sl scans a Bot's text"; else fail "privacy-comment-alert: $sl scans a Bot's text — got '$out'"; fi
+        run_scan "$s" issue_comment '{"comment":{"author_association":"COLLABORATOR","body":"zebra-canary"}}' "$pat"
+        if [[ "$out" == "match" ]]; then pass "privacy-comment-alert: $sl scans a collaborator's text"; else fail "privacy-comment-alert: $sl scans a collaborator's text — got '$out'"; fi
+        # Line by line, like privacy-denylist.py: `^term$` anchors per line, and a CR does not break `$`.
+        run_scan "$s" issue_comment '{"comment":{"author_association":"OWNER","body":"intro\nzebra-canary\r\nmore"}}' $'^zebra-canary$'
+        if [[ "$out" == "match" ]]; then pass "privacy-comment-alert: $sl anchors a pattern per line, ignoring a CR"; else fail "privacy-comment-alert: $sl anchors a pattern per line — got '$out'"; fi
+        run_scan "$s" issue_comment '{"comment":{"author_association":"OWNER","body":"a zebra-canary b"}}' $'^zebra-canary$'
+        if [[ "$out" == "clean" ]]; then pass "privacy-comment-alert: $sl does not match an anchored pattern inside a longer line"; else fail "privacy-comment-alert: $sl anchored pattern inside a longer line — got '$out'"; fi
+    done
+
+    # No oracle in the log or the step graph: no step's if: reads the scan
+    # result, and nothing in the workflow prints a word that exists only on a match.
+    for wf in "$tmpl/privacy-comment-alert.yml" "$own"; do
+        local label="${wf#"$REPO_ROOT"/}"
+        got=$(yq -r '.jobs[].steps[] | select(.if != null) | .if' "$wf" | grep -c 'steps.scan.outputs.result' || true)
+        if [[ "$got" == 0 ]]; then pass "privacy-comment-alert: $label has no step whose if: reads the scan result"; else fail "privacy-comment-alert: $label has a step whose if: reads the scan result"; fi
+        got=$(yq -r '.jobs[].steps[].run // ""' "$wf" | grep -ciE '(echo|printf).*(found|match)' || true)
+        if [[ "$got" == 0 ]]; then pass "privacy-comment-alert: $label prints no found/not-found line"; else fail "privacy-comment-alert: $label prints a found/not-found line"; fi
+    done
+
+    # The fallback loader (no privacy-denylist.py anywhere near the script).
+    cp "$scan" "$d/lone-scan.py"
+    run_scan "$d/lone-scan.py" issue_comment '{"comment":{"author_association":"OWNER","body":"a ZEBRA-canary"}}' "$pat"
+    if [[ "$out" == "match" ]]; then pass "privacy-comment-alert: the fallback loader matches case-insensitively without privacy-denylist.py"; else fail "privacy-comment-alert: the fallback loader matches — got '$out'"; fi
+    run_scan "$d/lone-scan.py" issue_comment '{"comment":{"author_association":"OWNER","body":"nothing"}}' "$pat"
+    if [[ "$out" == "clean" ]]; then pass "privacy-comment-alert: the fallback loader reads clean"; else fail "privacy-comment-alert: the fallback loader reads clean — got '$out'"; fi
 }
 
 # The lesson-check lane (ADR 0027): the case table holds against the template
@@ -29433,6 +29994,7 @@ GROUP_agent_checks=(
     test_agent_checks_guard
     test_agent_checks_persistent_delete
     test_agent_checks_privacy
+    test_agent_checks_privacy_ci
     test_agent_checks_bump_branch_push
     test_agent_checks_agents_md_size
     test_agent_checks_ci_annotation
@@ -29441,6 +30003,7 @@ GROUP_agent_checks=(
     test_agent_checks_dated_phrasing
     test_agent_checks_dated_phrasing_lock
     test_self_agent_checks
+    test_privacy_comment_alert
     test_sync_agent_checks
     test_agent_check_lane_cases
     test_agent_check_lane_module
