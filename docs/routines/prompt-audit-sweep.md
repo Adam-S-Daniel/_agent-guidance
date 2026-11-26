@@ -277,8 +277,9 @@ If `unshare` is refused in the sandbox, run the same command without it and
 log that. `--model sonnet` matches the model set on the task: the nested
 run is a CLI process of its own, and without the flag it runs the account
 default, which can weigh several times as much per token. Record from the
-JSON the model it ran on, the exit code and the turn count. Its `total_cost_usd` is an API-equivalent figure. On
-`authMethod` `claude.ai` it is subscription usage; on `oauth_token` the billing
+JSON the model it ran on, the exit code and the turn count. Its
+`total_cost_usd` is an API-equivalent figure. On `authMethod` `claude.ai` it
+is subscription usage; on `oauth_token` the billing
 basis is unverified (step 0, item 3), and the log says which value it ran on.
 
 Coverage: every step 1 path the report neither cites nor lists as read is
