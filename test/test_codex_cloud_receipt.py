@@ -27,7 +27,14 @@ ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / ".claude/hooks/fleet-memory.sh"
 BEGIN = "<!-- BEGIN FLEET GUIDANCE (managed by _agent-guidance) — DO NOT EDIT -->"
 END = "<!-- END FLEET GUIDANCE -->"
-def bounded_poll(predicate, timeout=10):
+# Seconds of real time before a hook run or a poll counts as hung. It only
+# bounds a broken fixture, so it must outlast a healthy run on a loaded machine:
+# a hook run takes about 0.4 s alone, and 10 s here failed a healthy baseline
+# run while other suites loaded the machine.
+HANG_GUARD = 60
+
+
+def bounded_poll(predicate, timeout=HANG_GUARD):
     """Poll a completion condition; the deadline only bounds a broken fixture."""
     deadline = time.monotonic() + timeout
     tick = threading.Event()
@@ -48,12 +55,12 @@ def timed_run(command, *, capture_output=False, check=False, **kwargs):
         kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     with subprocess.Popen(command, start_new_session=True, **kwargs) as process:
         try:
-            stdout, stderr = process.communicate(timeout=10)
+            stdout, stderr = process.communicate(timeout=HANG_GUARD)
         except subprocess.TimeoutExpired:
             if not isinstance(process.pid, int) or process.pid <= 1:
                 raise ValueError("unsafe subprocess group")
             os.killpg(process.pid, signal.SIGKILL)
-            process.communicate(timeout=10)
+            process.communicate(timeout=HANG_GUARD)
             raise
     result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
     if check:
@@ -1175,6 +1182,24 @@ os.open = denied
                 self.assertEqual(expected, delivered)
                 self.assertEqual([], list(private_tmp.iterdir()))
 
+    def test_a_healthy_run_outlasts_a_30_second_stall(self):
+        # Regression: a 10 s guard failed a healthy baseline hook run on a
+        # loaded machine. Every clock reading after the first is 30 s later,
+        # as when the machine deschedules the test that long, with no sleep.
+        def stalled():
+            readings = []
+            def clock():
+                readings.append(None)
+                return 1000.0 if len(readings) == 1 else 1030.0
+            return clock
+        self.assertTrue(hasattr(subprocess, "_time"), "subprocess no longer reads its clock as _time")
+        with mock.patch.object(subprocess, "_time", stalled()):
+            result = self.run_hook(enabled=False)
+        self.assertEqual(0, result.returncode)
+        polls = iter([False, True])
+        with mock.patch.object(time, "monotonic", stalled()):
+            bounded_poll(lambda: next(polls))
+
     def test_subprocess_timeout_kills_and_reaps_owned_group(self):
         process = mock.MagicMock()
         process.__enter__.return_value = process
@@ -1185,7 +1210,7 @@ os.open = denied
             with self.assertRaises(subprocess.TimeoutExpired):
                 timed_run(["fixture"], capture_output=True)
         kill.assert_called_once_with(123, signal.SIGKILL)
-        self.assertEqual([mock.call(timeout=10), mock.call(timeout=10)], process.communicate.call_args_list)
+        self.assertEqual([mock.call(timeout=HANG_GUARD)] * 2, process.communicate.call_args_list)
         for pid in (1, 0, -1, "123", mock.MagicMock()):
             with self.subTest(pid=pid):
                 process.pid = pid
