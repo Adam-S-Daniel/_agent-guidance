@@ -58,6 +58,7 @@ const mutations = {
   fixed: [spec, '`git merge-base --is-ancestor <sha> origin/persistent/prompt-audit-runs`', '`git merge-base --is-ancestor <sha> origin/main`'],
   fforce: [spec, 'Never force it.', 'Force it when needed.'],
   retry: [spec, 'Try at most 3 times;', 'Try as often as needed;'],
+  nestedmodel: [spec, '  --model sonnet \\\n', ''],
   sixhours: [spec, 'started less than 6 hours ago means', 'started less than 6 days ago means'],
   nopr: [spec, '- no pull request: the sweep never opens, updates or merges one;', '- one draft pull request, which the sweep may update;'],
   skip: [spec, 'second one: comment on it instead,', 'second one: skip the repo instead,'],
@@ -143,6 +144,13 @@ test('sweep is read-only, never merges, and files one labeled issue per repo', (
   includes(prose(section(spec, '4. Render one issue per repo')), ['One issue per repo', 'still open there', 'Do not apply the audit\'s proposed diff', 'Do not delete dated incident evidence']);
   includes(prose(section(spec, '5. File and verify')), ['`"labels": ["agent-ready"]` in the create call itself', 'raw REST `GET`']);
   includes(prose(section(spec, '3. Route every finding')), ['routes to `_agent-guidance`', '**warns and never blocks**', 'Confidence Low** stays in the run log']);
+  // The nested audit is a CLI process of its own: with no --model it runs the
+  // account default, not the model set on the task.
+  const audit = section(spec, '2. Audit, read-only');
+  const command = audit.filter(t => t.type === 'fence').map(t => t.content).find(c => c.includes('claude -p "/doctor prompt-audit'));
+  assert.ok(command, 'no fenced nested audit command');
+  assert.match(command, /\s--model sonnet\s/, 'the nested audit names no model');
+  includes(prose(audit), ['`--model sonnet` matches the model set on the task']);
   includes(prose(section(spec, '0. Before anything else')), ['prints `true`, `firstParty` and either `claude.ai` or `oauth_token`', '`oauth_token` means an OAuth token supplied through the environment', 'BLOCKED: nested claude is not on the subscription (loggedIn=<loggedIn>, apiProvider=<apiProvider>, authMethod=<authMethod>)', '`ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` must be unset', 'is **not verified**', 'Never imitate the audit']);
 });
 

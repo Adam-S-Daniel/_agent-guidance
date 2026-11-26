@@ -269,14 +269,17 @@ Per repo, from its checkout root, with the explicit file list from step 1:
 unshare --user --map-current-user --pid --fork --mount-proc -- \
   claude -p "/doctor prompt-audit <the step 1 paths, space separated>" \
   --permission-mode plan --tools "Read Glob Grep" \
+  --model sonnet \
   --output-format json --no-session-persistence --max-budget-usd 5
 ```
 
 If `unshare` is refused in the sandbox, run the same command without it and
-log that. No `--model`: the nested run uses the account default, like the
-routine. Record from the JSON the model it ran on, the exit code and the
-turn count. Its `total_cost_usd` is an API-equivalent figure. On
-`authMethod` `claude.ai` it is subscription usage; on `oauth_token` the billing
+log that. `--model sonnet` matches the model set on the task: the nested
+run is a CLI process of its own, and without the flag it runs the account
+default, which can weigh several times as much per token. Record from the
+JSON the model it ran on, the exit code and the turn count. Its
+`total_cost_usd` is an API-equivalent figure. On `authMethod` `claude.ai` it
+is subscription usage; on `oauth_token` the billing
 basis is unverified (step 0, item 3), and the log says which value it ran on.
 
 Coverage: every step 1 path the report neither cites nor lists as read is
