@@ -69,13 +69,18 @@ function checkWindow(doc) {
   return { timezone: doc.timezone, weekday: doc.weekday, start: doc.start, end: doc.end };
 }
 
-/** A canonical IANA name only, spelled exactly as Intl resolves it: Intl
- * also takes lower case and offsets such as "+05:00", which skills-evals'
- * Python reader (zoneinfo) refuses, so both readers accept the same values. */
+/** An IANA name, spelled as the tz database spells it. Intl also takes lower
+ * case and offsets such as "+05:00", which skills-evals' Python reader
+ * (zoneinfo) refuses, so both readers accept the same values: every part
+ * starts with a capital, and a name Intl resolves to the same letters in
+ * another case is refused. A name Intl resolves to a different one is a tz
+ * database link, which zoneinfo loads too: Intl renames Asia/Kolkata to
+ * Asia/Calcutta and Europe/Kyiv to Europe/Kiev, and both are valid. */
 function validZone(zone) {
-  if (!/^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z0-9_+-]+)*$/.test(zone)) return false;
+  if (!/^[A-Z][A-Za-z0-9_+-]*(\/[A-Z][A-Za-z0-9_+-]*)*$/.test(zone)) return false;
   try {
-    return new Intl.DateTimeFormat("en-US", { timeZone: zone }).resolvedOptions().timeZone === zone;
+    const resolved = new Intl.DateTimeFormat("en-US", { timeZone: zone }).resolvedOptions().timeZone;
+    return resolved === zone || resolved.toLowerCase() !== zone.toLowerCase();
   } catch {
     return false;
   }

@@ -100,6 +100,19 @@ test("the next start is later the same day before the window and next week after
   assert.equal(mod.nextWindowStart(new Date("2026-12-31T23:00:00Z"), WINDOW), "2027-01-04T17:00:00.000Z");
 });
 
+test("a zone name Intl renames is still a valid zone", () => {
+  // Intl resolves each of these tz database names to an older spelling
+  // (Asia/Calcutta, Europe/Kiev, America/Buenos_Aires, America/New_York), and
+  // Python's zoneinfo loads every one as written.
+  for (const timezone of ["Asia/Kolkata", "Europe/Kyiv", "America/Argentina/Buenos_Aires", "US/Eastern"]) {
+    const window = mod.checkWindow({ timezone, weekday: 1, start: "12:00", end: "14:00" });
+    assert.equal(window.timezone, timezone);
+  }
+  // The window's instants are the named zone's: noon in India is 06:30 UTC.
+  const india = { timezone: "Asia/Kolkata", weekday: 1, start: "12:00", end: "14:00" };
+  assert.equal(mod.nextWindowStart(new Date("2026-11-29T00:00:00Z"), india), "2026-11-30T06:30:00.000Z");
+});
+
 test("checkWindow rejects bad bounds", () => {
   const bad = [
     null, [], { timezone: "UTC", weekday: 1, start: "17:00" },
@@ -107,6 +120,9 @@ test("checkWindow rejects bad bounds", () => {
     { timezone: "UTC", weekday: 1, start: "17:00", end: "19:00", tz: "UTC" },
     { timezone: "Eastern", weekday: 1, start: "17:00", end: "19:00" },
     { timezone: "america/new_york", weekday: 1, start: "17:00", end: "19:00" },
+    { timezone: "America/new_york", weekday: 1, start: "17:00", end: "19:00" },
+    { timezone: "asia/kolkata", weekday: 1, start: "17:00", end: "19:00" },
+    { timezone: "Asia/Nowhere", weekday: 1, start: "17:00", end: "19:00" },
     { timezone: "+05:00", weekday: 1, start: "17:00", end: "19:00" },
     { timezone: 5, weekday: 1, start: "17:00", end: "19:00" },
     { timezone: "UTC", weekday: 0, start: "17:00", end: "19:00" },
