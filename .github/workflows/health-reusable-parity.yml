@@ -49,7 +49,7 @@ jobs:
       - name: Mint an installation token for the bump PR
         if: github.event_name != 'pull_request'
         id: token
-        uses: actions/create-github-app-token@v3.3.0
+        uses: actions/create-github-app-token@v3.4.0
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
