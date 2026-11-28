@@ -10249,7 +10249,7 @@ test_bump_lost_skill_key() {
 # registry pull request itself. That is also what stops "no checks ran" from
 # being enough to merge a removal (#488 item 3): every PR here has an empty
 # rollup, which pr_merge_verdict alone reads as ready.
-make_lost_key_sweep_repo() {   # <name> <number> <isDraft>
+make_lost_key_sweep_repo() {   # <name> <number> <isDraft> [createdAt]
     local name="$1" bare="$TEST_DIR/bare-lost/bumporg_$1" work="$TEST_DIR/work/lost-sweep-$1"
     make_lost_key_consumer "$TEST_DIR/bare-lost" "$name"
     rm -rf "$work"
@@ -10264,8 +10264,10 @@ make_lost_key_sweep_repo() {   # <name> <number> <isDraft>
     git push -q origin HEAD:refs/heads/skills-lock-bump/update >/dev/null 2>&1
     cd "$REPO_ROOT"
     mkdir -p "$TEST_DIR/lost-pr-dir"
-    printf '[{"number":%s,"headRefName":"skills-lock-bump/update","baseRefName":"main","author":{"login":"agents-md-sync[bot]"},"isDraft":%s,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"","statusCheckRollup":[]}]\n' \
-        "$2" "$3" > "$TEST_DIR/lost-pr-dir/bumporg_$name.json"
+    local created=""
+    [[ -n "${4:-}" ]] && created=",\"createdAt\":\"$4\""
+    printf '[{"number":%s,"headRefName":"skills-lock-bump/update","baseRefName":"main","author":{"login":"agents-md-sync[bot]"},"isDraft":%s%s,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":"","statusCheckRollup":[]}]\n' \
+        "$2" "$3" "$created" > "$TEST_DIR/lost-pr-dir/bumporg_$name.json"
 }
 
 # make_lost_key_branch_stale <name> — the bump branch moves to a commit whose
@@ -10348,6 +10350,47 @@ test_bump_sweep_lost_skill_key() {
     run_lost_key_sweep "$log" "$pulls"
     assert_contains "$log" "bumporg/repo-lost-d#304: not merged — it is a draft" "sweep, held draft unreviewed: still a draft"
     assert_not_contains "$BUMP_PR_LOG" "pr-ready 304 " "sweep, held draft unreviewed: not marked ready"
+
+    # ── A held draft past BUMP_HOLD_ALERT_DAYS: a counted failure ─────
+    # Opened 2026-11-20T00:00:00Z; "now" is 2026-11-24T00:00:00Z (4 days).
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir"
+    make_lost_key_sweep_repo repo-lost-f 306 true 2026-11-20T00:00:00Z
+    write_lost_key_pulls "$pulls" $'Retire writing-adrs.\n'
+    log="$TEST_DIR/sweep-lost-old-draft.txt"
+    BUMP_NOW_EPOCH=1795478400 run_lost_key_sweep "$log" "$pulls"
+    assert_contains "$log" "bumporg/repo-lost-f#306: HELD for 4 days — it drops 1 skill key(s) without a recorded review" \
+        "old held draft: reported as a failure naming its age"
+    assert_contains "$log" "Every skill update for this consumer waits behind it" \
+        "old held draft: says what the hold blocks"
+    [[ $BUMP_EXIT -ne 0 ]] && pass "old held draft: the run exits non-zero" || fail "old held draft: the run exits non-zero"
+    assert_not_contains "$BUMP_PR_LOG" "pr-ready 306 " "old held draft: not marked ready"
+    assert_not_contains "$BUMP_PR_LOG" "pr-merged 306 " "old held draft: not merged"
+
+    # ── Exactly BUMP_HOLD_ALERT_DAYS old (3 days): already a failure ─
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir"
+    make_lost_key_sweep_repo repo-lost-h 308 true 2026-11-21T00:00:00Z
+    write_lost_key_pulls "$pulls" $'Retire writing-adrs.\n'
+    log="$TEST_DIR/sweep-lost-boundary-draft.txt"
+    BUMP_NOW_EPOCH=1795478400 run_lost_key_sweep "$log" "$pulls"
+    assert_contains "$log" "bumporg/repo-lost-h#308: HELD for 3 days" "held draft at the threshold: a failure"
+    # ── A raised threshold keeps a 4-day hold quiet ───────────────────
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir"
+    make_lost_key_sweep_repo repo-lost-i 309 true 2026-11-20T00:00:00Z
+    write_lost_key_pulls "$pulls" $'Retire writing-adrs.\n'
+    log="$TEST_DIR/sweep-lost-raised-draft.txt"
+    BUMP_HOLD_ALERT_DAYS=7 BUMP_NOW_EPOCH=1795478400 run_lost_key_sweep "$log" "$pulls"
+    assert_not_contains "$log" "HELD for " "raised threshold: a 4-day hold stays quiet"
+    [[ $BUMP_EXIT -eq 0 ]] && pass "raised threshold: the run exits 0" || fail "raised threshold: the run exits 0 (got $BUMP_EXIT)"
+
+    # ── The same draft one day old: still a quiet hold (#566) ────────
+    rm -rf "$TEST_DIR/bare-lost" "$TEST_DIR/lost-pr-dir"
+    make_lost_key_sweep_repo repo-lost-g 307 true 2026-11-23T00:00:00Z
+    write_lost_key_pulls "$pulls" $'Retire writing-adrs.\n'
+    log="$TEST_DIR/sweep-lost-young-draft.txt"
+    BUMP_NOW_EPOCH=1795478400 run_lost_key_sweep "$log" "$pulls"
+    assert_contains "$log" "bumporg/repo-lost-g#307: not merged — it is a draft" "young held draft: still a quiet draft"
+    assert_not_contains "$log" "HELD for " "young held draft: no age failure"
+    [[ $BUMP_EXIT -eq 0 ]] && pass "young held draft: the run exits 0" || fail "young held draft: the run exits 0 (got $BUMP_EXIT)"
 
     # ── A held draft that went STALE (#566): the branch differs from tonight's
     # re-pin, and tonight's is held too. Not a failure, never force-pushed,
