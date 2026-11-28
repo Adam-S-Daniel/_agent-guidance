@@ -20,8 +20,7 @@ Where the denylist comes from, first match wins:
 
 One pattern per line. Blank lines and lines starting with `#` are ignored.
 Patterns are Python regular expressions matched CASE-INSENSITIVELY; a pattern
-that needs case says so inline with `(?-i:...)`. The format is the one
-adam-agentskills' scripts/check_privacy_denylist.py defines.
+that needs case says so inline with `(?-i:...)`.
 
 Usage:
   privacy-denylist.py [--repo PATH] [--ref NAME]... [--commits-stdin]
