@@ -45,7 +45,9 @@ set -euo pipefail
 #      `Adversarial-review: pass <url>` in that PR's body. Missing for any key,
 #      the PR is opened as a DRAFT, which the sweep never merges; the sweep
 #      re-checks the review itself before merging a removal, and marks a held
-#      draft ready once the review appears (_agent-guidance#488)
+#      draft ready once the review appears (_agent-guidance#488). A held draft
+#      open BUMP_HOLD_ALERT_DAYS (default 3) or longer is a counted failure,
+#      since it freezes every skill update for that consumer
 #
 # WHY THIS LIVES HERE AND NOT IN THE REGISTRY. ADR 0001 said re-pinning
 # "belongs in agentskills (it owns the generator and the digests)". Half of it
@@ -1468,6 +1470,28 @@ open_bump_draft_number() {
     printf '%s\n' "$number"
 }
 
+# held_draft_age_days <pr json> — whole days since the pull request was
+# opened (`createdAt`), against BUMP_NOW_EPOCH when set (tests) or the clock.
+# Returns 1, printing nothing, when the age cannot be read.
+held_draft_age_days() {
+    local now="${BUMP_NOW_EPOCH:-}"
+    [[ -n "$now" ]] || now=$(date -u +%s) || return 1
+    python3 -c '
+import json, re, sys
+from datetime import datetime
+with open(sys.argv[1], encoding="utf-8") as handle:
+    stamp = json.load(handle).get("createdAt")
+now = sys.argv[2]
+if not (isinstance(stamp, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", stamp)
+        and re.fullmatch(r"[0-9]{1,12}", now)):
+    sys.exit(1)
+age = int(now) - int(datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S%z").timestamp())
+if age < 0:
+    sys.exit(1)
+print(age // 86400)
+' "$1" "$now" 2>/dev/null
+}
+
 sweep_bump_prs() {
     local repo_name numbers_raw number pr_json view_err verdict_line verdict detail merge_out
     local list_err_file numbers_rc numbers_err verdict_err_file verdict_rc verdict_err
@@ -1585,7 +1609,7 @@ sweep_bump_prs() {
                 # file: $view_err is always empty and the reason is discarded
                 # again, which is the bug this line is fixing.
                 if ! view_err=$(gh pr view "$number" --repo "$repo_name" --json \
-                    number,headRefName,headRefOid,baseRefName,isDraft,author,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,files \
+                    number,headRefName,headRefOid,baseRefName,isDraft,author,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,files,createdAt \
                     2>&1 >"$pr_json"); then
                     outcome="view_error"
                     break
@@ -1675,9 +1699,27 @@ sweep_bump_prs() {
                     # removal whose review has since been recorded upstream.
                     # Marked ready, it merges on a later run once its checks
                     # have had their day, like any other bump.
-                    if [[ "$detail" == "it is a draft" ]] \
-                       && gate_line=$(sweep_removal_gate "$repo_name" "$pr_json" 2>/dev/null) \
-                       && [[ "$gate_line" == REVIEWED\ * ]]; then
+                    gate_line=""
+                    if [[ "$detail" == "it is a draft" ]]; then
+                        gate_line=$(sweep_removal_gate "$repo_name" "$pr_json" 2>/dev/null) || gate_line=""
+                    fi
+                    # A hold that outlives BUMP_HOLD_ALERT_DAYS is a failure.
+                    # A held draft freezes EVERY skill update for that consumer,
+                    # not just the removal: from 2026-11-13 to 2026-11-24 two
+                    # unreviewed cms-platform removals held both sites' bumps,
+                    # each run was green, and cloud sessions kept loading a
+                    # stale platform-release-and-bump until a dashboard alert
+                    # was noticed by hand. A red run is what the scheduled-run
+                    # health audit files an issue for. A fresh hold stays quiet
+                    # (#566), and an unreadable age is never an alert.
+                    if [[ "$gate_line" == HELD\ * ]] \
+                       && held_days=$(held_draft_age_days "$pr_json") \
+                       && (( held_days >= ${BUMP_HOLD_ALERT_DAYS:-3} )); then
+                        fail "$repo_name#$number: HELD for $held_days days — ${gate_line#HELD }. Every skill update for this consumer waits behind it. Record an 'Adversarial-review: pass <url>' line on each registry pull request that removed a key (_agent-guidance#488), or close this draft to decline the removal."
+                        ((FAIL_COUNT++)) || true
+                        continue
+                    fi
+                    if [[ "$gate_line" == REVIEWED\ * ]]; then
                         if $DRY_RUN; then
                             log "[DRY RUN] Would mark $repo_name#$number ready — ${gate_line#REVIEWED }"
                         elif gh pr ready "$number" --repo "$repo_name" >/dev/null 2>&1; then
