@@ -1495,12 +1495,17 @@ print(age // 86400)
 sweep_bump_prs() {
     local repo_name numbers_raw number pr_json view_err verdict_line verdict detail merge_out
     local list_err_file numbers_rc numbers_err verdict_err_file verdict_rc verdict_err
-    local head_oid gate_line gate_err_file gate_rc gate_err
+    local head_oid gate_line gate_err_file gate_rc gate_err held_days hold_alert_days
     local unknown_reads unknown_delay attempt outcome
     local -a match_args
     local -a numbers
 
     echo "Sweeping bump pull requests left open by a previous run"
+    hold_alert_days="${BUMP_HOLD_ALERT_DAYS:-3}"
+    if [[ ! "$hold_alert_days" =~ ^[0-9]{1,4}$ ]]; then
+        echo "::warning::BUMP_HOLD_ALERT_DAYS is not a whole number of days; using 3."
+        hold_alert_days=3
+    fi
 
     for repo_name in "${REPOS[@]}"; do
         # The same carve-out the propose pass makes: this bumper opens nothing
@@ -1714,7 +1719,7 @@ sweep_bump_prs() {
                     # (#566), and an unreadable age is never an alert.
                     if [[ "$gate_line" == HELD\ * ]] \
                        && held_days=$(held_draft_age_days "$pr_json") \
-                       && (( held_days >= ${BUMP_HOLD_ALERT_DAYS:-3} )); then
+                       && (( 10#$held_days >= 10#$hold_alert_days )); then
                         fail "$repo_name#$number: HELD for $held_days days — ${gate_line#HELD }. Every skill update for this consumer waits behind it. Record an 'Adversarial-review: pass <url>' line on each registry pull request that removed a key (_agent-guidance#488), or close this draft to decline the removal."
                         ((FAIL_COUNT++)) || true
                         continue
